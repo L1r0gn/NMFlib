@@ -2,7 +2,8 @@
 
 纯 MoonBit 实现的非负矩阵分解（NMF）库。`V ≈ W·H`，W、H 非负。
 
-> 状态：v0.1.0 开发中，当前里程碑 T01–T07（MU-Frobenius 完整闭环）。开发规格见 [PLAN.md](PLAN.md)，架构见 [docs/architecture.md](docs/architecture.md)。
+> 状态：v0.1.0 开发中。**T01–T07 已完成**：MU-Frobenius 完整闭环可用，74 项测试在
+> wasm / wasm-gc / js / native 四后端全部通过。开发规格见 [PLAN.md](PLAN.md)，架构见 [docs/architecture.md](docs/architecture.md)。
 
 <!-- 远程仓库确认后启用 CI 徽章：
 [![CI](https://github.com/<owner>/nmf/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/nmf/actions/workflows/ci.yml)
@@ -12,17 +13,20 @@
 
 | 功能 | 状态 |
 |---|---|
-| MU-Frobenius 求解器 | T01–T07 实现中 |
-| Random 初始化（SplitMix64，seed 可复现） | T01–T07 实现中 |
-| fit / fit_transform / transform / inverse_transform / reconstruction_error | T01–T07 实现中 |
-| 完整错误处理（`Result` + 7 类错误枚举，不静默修改输入） | T01–T07 实现中 |
+| MU-Frobenius 求解器（Lee & Seung 乘法更新，诚实收敛标记） | ✅ 已实现 |
+| Random 初始化（SplitMix64，固定 seed 逐位可复现） | ✅ 已实现 |
+| fit / fit_transform / transform / inverse_transform / reconstruction_error | ✅ 已实现 |
+| 完整错误处理（`Result` + 7 类错误枚举，不静默修改输入） | ✅ 已实现 |
+| 可运行示例 `examples/quickstart` | ✅ 已实现 |
 | CD-Frobenius 求解器 | 计划（T08） |
 | NNDSVD / NNDSVDa 初始化 | 计划（T09–T10） |
 | MU-KL 散度 | 计划（T11） |
 | L1/L2 正则（进入优化目标） | 计划（T12） |
 | Hoyer 稀疏度指标 | 计划（T13） |
 
-纯 MoonBit、零第三方依赖（仅 core），支持 wasm / wasm-gc / js / native 四个后端。
+选择尚未实现的求解器/损失/初始化或非零正则时，`fit` 返回 `Err(InvalidConfig)`（注明目标任务号），不会静默替换。
+
+纯 MoonBit、零第三方依赖（仅 core），wasm / wasm-gc / js / native 四后端均执行真实测试。
 
 ## 安装
 
@@ -35,6 +39,8 @@ moon add L1r0gn/nmf
 当前可直接克隆源码使用（尚未发布）。
 
 ## 快速上手
+
+与 `examples/quickstart/main.mbt` 一致（已实际运行验证）：
 
 ```moonbit
 fn demo() -> Result[Unit, @nmf.NMFError] {
@@ -62,22 +68,70 @@ fn demo() -> Result[Unit, @nmf.NMFError] {
   println("W: \{w.rows()}x\{w.cols()}, H: \{h.rows()}x\{h.cols()}, error=\{err}")
   Ok(())
 }
+
+fn main {
+  match demo() {
+    Ok(_) => ()
+    Err(e) => println("NMF failed: \{e}")
+  }
+}
 ```
 
-未训练的模型调用 `w()` / `h()` / `transform()` 等接口会返回 `Err(NotFitted)`。完整可运行示例见 `examples/quickstart`（T16 交付；T07 完成后提供等价演示）。
+在仓库根目录运行：
+
+```sh
+moon run examples/quickstart
+```
+
+实际输出（seed=42，两个工具链版本一致）：
+
+```text
+W: 3x2, H: 2x3
+iterations=64, converged=true
+reconstruction error = 1.8065620213588327
+```
+
+### NMFConfig 使用方法
+
+全部参数为标签参数，除 `n_components` 外均有默认值：
+
+```moonbit
+let config = @nmf.NMFConfig::new(
+  n_components=2,            // 分解秩 k，必填，1 ≤ k ≤ min(rows, cols)
+  solver=@nmf.Solver::MU,    // 默认 MU（CD 计划 T08）
+  loss=@nmf.Loss::Frobenius, // 默认 Frobenius（KL 计划 T11）
+  init=@nmf.Init::Random,    // 默认 Random（NNDSVD/NNDSVDa 计划 T09–T10）
+  max_iter=500,              // 默认 200；耗尽未达标时 converged=false
+  tol=1.0e-6,                // 默认 1e-4；相邻目标相对变化 |ΔF|/max(1,|F|) < tol 即收敛
+  seed=2026UL,               // 默认 42；同 seed 结果逐位一致
+)
+```
+
+训练结果通过 `model.w()` / `model.h()`（防御性拷贝）、`model.n_iter()`、
+`model.loss_value()`（真实目标 ½‖V−WH‖²_F）、`model.converged()` 读取；
+`model.reconstruction_error(v)` 返回范数 ‖V−WH‖_F = sqrt(2·loss)。
+未训练的模型调用以上接口一律返回 `Err(NotFitted)`；fit 失败会回到未训练状态。
+`model.transform(x)` 固定 H 对新数据解 W；`model.inverse_transform(w)` 计算 W·H。
 
 ## 运行测试
 
 ```sh
 moon check --deny-warn   # 类型与警告检查
-moon test                # 全部测试（默认 wasm 后端）
-moon test --target js    # JS 后端
+moon test                # 全部 74 项测试（默认 wasm 后端）
+moon test --target js    # JS 后端（真实执行全部测试）
 moon test --target wasm-gc
 moon test --target native
 moon fmt --check         # 格式检查
 ```
 
-CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 check、完整测试套件、三后端 check+test。工具链版本采用 fail-closed 固定策略（见 `scripts/ci-install-moonbit.sh`）。
+测试分层：Matrix 单元/白盒内核 → Error 行为 → SplitMix64/Random → Frobenius 损失 →
+MU 求解器 → NMF API → 端到端验收（普通矩阵、已知低秩、全零、非法输入、seed 复现、
+未收敛状态）+ 200 组随机属性扫描。固定小型矩阵与手算参考值为主，随机数据仅作补充。
+
+CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 check、完整测试套件、
+三后端 check+test。工具链版本采用 fail-closed 固定策略（见 `scripts/ci-install-moonbit.sh`）：
+官方安装脚本安装后断言版本号，不符即失败。远程仓库尚未创建，CI 尚未在 GitHub 上实际运行；
+上述步骤均已在本地按 CI 相同命令验证。
 
 ## 与现有实现的关系
 

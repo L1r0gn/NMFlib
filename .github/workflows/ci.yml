@@ -48,8 +48,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # All three targets run real tests (verified locally with the probe
-        # project on moon 0.1.20261028 and 0.1.20261104).
+        # All three targets run the real 74-test suite (verified locally on
+        # moon 0.1.20261028 and 0.1.20261104; not compile-only checks).
         target: [native, js, wasm-gc]
     steps:
       - uses: actions/checkout@v5
