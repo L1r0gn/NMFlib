@@ -1,4 +1,3 @@
 import {
-  "moonbitlang/core/math" @math,
-  "moonbitlang/core/debug" @debug,
+  "moonbitlang/core/debug",
 }
