@@ -1,0 +1,10 @@
+# MoonBit build artifacts
+_build/
+
+# Local research scratch (competitor source backup, probe projects, task notes)
+.research/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp

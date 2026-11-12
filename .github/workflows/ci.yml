@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Minimal permissions: CI only reads the repository contents.
+permissions:
+  contents: read
+
+env:
+  # Locally verified toolchain pin, enforced fail-closed by
+  # scripts/ci-install-moonbit.sh (the official CDN has no versioned keys).
+  EXPECTED_MOON_VERSION: "0.1.20261104"
+
+jobs:
+  check:
+    name: MoonBit Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install MoonBit (official installer, version-asserted)
+        run: bash scripts/ci-install-moonbit.sh
+      - name: Format check
+        run: moon fmt --check
+      - name: Check (deny warnings)
+        run: moon check --deny-warn
+
+  test:
+    name: Unit & Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install MoonBit (official installer, version-asserted)
+        run: bash scripts/ci-install-moonbit.sh
+      # Default target is wasm (moon.mod preferred_target). Runs the whole
+      # suite: Matrix, error, Random, Frobenius loss, MU, NMF API, end-to-end.
+      - name: Run full test suite
+        run: moon test
+
+  backends:
+    name: Backend ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # All three targets run real tests (verified locally with the probe
+        # project on moon 0.1.20261028 and 0.1.20261104).
+        target: [native, js, wasm-gc]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install MoonBit (official installer, version-asserted)
+        run: bash scripts/ci-install-moonbit.sh
+      - name: Check (${{ matrix.target }})
+        run: moon check --target ${{ matrix.target }} --deny-warn
+      - name: Test (${{ matrix.target }})
+        run: moon test --target ${{ matrix.target }}
