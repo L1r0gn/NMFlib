@@ -1,5 +1,5 @@
 ///|
-/// Denominator floor for multiplicative updates (PLAN §8.1).
+/// Denominator floor for multiplicative updates.
 ///
 /// We use `max(den, MU_EPS)` rather than `den + MU_EPS`: whenever the
 /// denominator is meaningful (>= 1e-10) the update is *exactly* the
@@ -22,8 +22,8 @@ priv struct MuFit {
 }
 
 ///|
-/// Relative objective change `|F_t − F_{t−1}| / max(1, |F_{t−1}|)`
-/// (PLAN §8.4); the `max(1, ·)` avoids division by zero near F = 0.
+/// Relative objective change `|F_t − F_{t−1}| / max(1, |F_{t−1}|)`;
+/// the `max(1, ·)` avoids division by zero near F = 0.
 fn rel_change(f : Double, prev : Double) -> Double {
   let base = if prev.abs() > 1.0 { prev.abs() } else { 1.0 }
   (f - prev).abs() / base

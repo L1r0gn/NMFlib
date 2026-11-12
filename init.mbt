@@ -1,5 +1,5 @@
 ///|
-/// Initialization scale `sqrt(mean(V) / k)` (sklearn-style, PLAN §8.8).
+/// Initialization scale `sqrt(mean(V) / k)` (sklearn-style).
 /// For an all-zero input the mean is 0 and the scale falls back to 1 so the
 /// initial factors stay strictly positive.
 fn init_scale(v : Matrix, k : Int32) -> Result[Double, NMFError] {

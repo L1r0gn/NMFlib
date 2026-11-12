@@ -3,7 +3,7 @@
 纯 MoonBit 实现的非负矩阵分解（NMF）库。`V ≈ W·H`，W、H 非负。
 
 > 状态：v0.1.0 开发中。**T01–T07 已完成**：MU-Frobenius 完整闭环可用，74 项测试在
-> wasm / wasm-gc / js / native 四后端全部通过。开发规格见 [PLAN.md](PLAN.md)。
+> wasm / wasm-gc / js / native 四后端全部通过。
 
 <!-- 远程仓库确认后启用 CI 徽章：
 [![CI](https://github.com/<owner>/nmf/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/nmf/actions/workflows/ci.yml)
@@ -135,7 +135,7 @@ CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 
 
 ## 与现有实现的关系
 
-mooncakes.io 已有 `Juwan-Hwang/moon-certified/ml/nmf`（大仓库子包，仅 MU-Frobenius）。本库为专用 NMF 库：多求解器/多损失/NNDSVD 初始化/显式错误处理/数值验证。差异详见 PLAN.md 第 2 节。未复制其源码。
+mooncakes.io 已有 `Juwan-Hwang/moon-certified/ml/nmf`（大仓库子包，仅 MU-Frobenius）。本库为专用 NMF 库：多求解器/多损失/NNDSVD 初始化/显式错误处理/数值验证。未复制其源码。
 
 ## 参考来源
 

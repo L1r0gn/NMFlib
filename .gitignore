@@ -8,6 +8,7 @@ pkg.generated.mbti
 
 # Local planning/architecture docs (kept on disk, not published)
 docs/
+PLAN.md
 
 # OS / editor noise
 .DS_Store
