@@ -1,0 +1,8 @@
+# Normalize line endings so `moon fmt --check` is stable across platforms.
+* text=auto
+*.mbt text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+moon.mod text eol=lf
+moon.pkg text eol=lf

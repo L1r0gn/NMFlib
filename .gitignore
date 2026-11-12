@@ -1,5 +1,7 @@
 # MoonBit build artifacts
 _build/
+.mooncakes/
+pkg.generated.mbti
 
 # Local research scratch (competitor source backup, probe projects, task notes)
 .research/

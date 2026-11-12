@@ -1,0 +1,5 @@
+import {
+  "L1r0gn/nmf",
+}
+
+pkgtype(kind: "executable")
