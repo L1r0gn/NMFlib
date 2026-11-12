@@ -6,6 +6,9 @@ pkg.generated.mbti
 # Local research scratch (competitor source backup, probe projects, task notes)
 .research/
 
+# Local planning/architecture docs (kept on disk, not published)
+docs/
+
 # OS / editor noise
 .DS_Store
 Thumbs.db
