@@ -1,5 +1,5 @@
 import {
-  "L1r0gn/nmf",
+  "L1r0gn/nmf/src" @nmf,
 }
 
 pkgtype(kind: "executable")

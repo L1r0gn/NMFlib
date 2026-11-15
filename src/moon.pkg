@@ -1,0 +1,7 @@
+import {
+  "moonbitlang/core/debug",
+}
+
+import {
+  "L1r0gn/nmf/src" @nmf,
+} for "test"
