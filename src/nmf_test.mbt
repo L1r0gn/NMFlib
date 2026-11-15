@@ -40,7 +40,6 @@ test "api: unsupported loss/init/regularization values are explicit errors" {
       loss=@nmf.Loss::KLDivergence,
     ),
     @nmf.NMFConfig::new(n_components=1, loss=@nmf.Loss::KLDivergence),
-    @nmf.NMFConfig::new(n_components=1, init=@nmf.Init::NNDSVD),
     @nmf.NMFConfig::new(n_components=1, init=@nmf.Init::NNDSVDa),
     @nmf.NMFConfig::new(n_components=1, l1_reg=0.1),
     @nmf.NMFConfig::new(n_components=1, l2_reg=0.1),

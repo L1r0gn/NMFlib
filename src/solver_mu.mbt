@@ -49,12 +49,28 @@ fn mu_frobenius_fit(
   tol : Double,
   seed : UInt64,
 ) -> Result[MuFit, NMFError] {
-  let n = v.rows
-  let d = v.cols
   let (w, h) = match random_init(v, k, seed) {
     Ok(pair) => pair
     Err(e) => return Err(e)
   }
+  mu_frobenius_fit_from(v, w, h, max_iter, tol)
+}
+
+///|
+/// MU-Frobenius fit from caller-supplied initial factors. The update rules,
+/// buffers, and convergence behavior are identical to `mu_frobenius_fit`;
+/// this entry point lets NNDSVD (T09) supply its own non-negative W/H while
+/// keeping Random initialization bit-for-bit unchanged.
+fn mu_frobenius_fit_from(
+  v : Matrix,
+  w : Matrix,
+  h : Matrix,
+  max_iter : Int32,
+  tol : Double,
+) -> Result[MuFit, NMFError] {
+  let n = v.rows
+  let d = v.cols
+  let k = w.cols
   // Scratch buffers allocated once and reused every iteration.
   let wv = zeros_buf(k, d) // WᵀV
   let ww = zeros_buf(k, k) // WᵀW

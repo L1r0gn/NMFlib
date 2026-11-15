@@ -213,12 +213,27 @@ fn cd_frobenius_fit(
   tol : Double,
   seed : UInt64,
 ) -> Result[CdFit, NMFError] {
-  let n = v.rows
-  let d = v.cols
   let (w, h) = match random_init(v, k, seed) {
     Ok(pair) => pair
     Err(e) => return Err(e)
   }
+  cd_frobenius_fit_from(v, w, h, max_iter, tol)
+}
+
+///|
+/// CD-Frobenius fit from caller-supplied initial factors. The sweeps, buffers,
+/// and convergence behavior are identical to `cd_frobenius_fit`; NNDSVD
+/// (T09) supplies its own non-negative W/H.
+fn cd_frobenius_fit_from(
+  v : Matrix,
+  w : Matrix,
+  h : Matrix,
+  max_iter : Int32,
+  tol : Double,
+) -> Result[CdFit, NMFError] {
+  let n = v.rows
+  let d = v.cols
+  let k = w.cols
   // Buffers allocated once and reused across iterations.
   let wtw = zeros_buf(k, k) // WᵀW
   let wv = zeros_buf(k, d) // WᵀV

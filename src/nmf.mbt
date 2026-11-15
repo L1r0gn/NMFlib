@@ -18,8 +18,9 @@ pub(all) enum Loss {
 }
 
 ///|
-/// Initialization selection. `NNDSVD`/`NNDSVDa` land in T09–T10; selecting
-/// them before then returns `InvalidConfig`.
+/// Initialization selection. `NNDSVD` is implemented in T09 and is
+/// deterministic (seed-independent); `NNDSVDa` remains T10 and is rejected at
+/// validation time.
 #warnings("-unused_constructor")
 pub(all) enum Init {
   Random
@@ -63,7 +64,7 @@ pub fn NMFConfig::new(
 ///|
 /// Validates configuration. Unsupported solver/loss/init combinations and
 /// any nonzero regularization are rejected explicitly (remaining
-/// implementations arrive in T09–T12); nothing is silently substituted.
+/// implementations arrive in T10–T12); nothing is silently substituted.
 fn validate_config(c : NMFConfig) -> Result[Unit, NMFError] {
   if c.solver is CD && c.loss is KLDivergence {
     return Err(InvalidConfig("unsupported combination: CD solver with KL loss"))
@@ -74,14 +75,11 @@ fn validate_config(c : NMFConfig) -> Result[Unit, NMFError] {
     Frobenius => ()
   }
   match c.init {
-    NNDSVD =>
-      return Err(
-        InvalidConfig("NNDSVD init is not implemented yet (planned T09)"),
-      )
     NNDSVDa =>
       return Err(
         InvalidConfig("NNDSVDa init is not implemented yet (planned T10)"),
       )
+    NNDSVD => ()
     Random => ()
   }
   if c.max_iter < 1 {
@@ -160,34 +158,91 @@ pub fn NMF::fit(self : NMF, v : Matrix) -> Result[Unit, NMFError] {
   if k > max_k {
     return Err(InvalidRank(k))
   }
-  let (w, h, n_iter, loss_value, converged) = match self.config.solver {
-    MU =>
-      match
-        mu_frobenius_fit(
-          v,
-          k,
-          self.config.max_iter,
-          self.config.tol,
-          self.config.seed,
-        ) {
-        Ok(r) => (r.w, r.h, r.n_iter, r.loss_value, r.converged)
-        Err(e) => return Err(e)
+  let result = match self.config.init {
+    Random =>
+      match self.config.solver {
+        MU =>
+          mu_fit_summary(
+            mu_frobenius_fit(
+              v,
+              k,
+              self.config.max_iter,
+              self.config.tol,
+              self.config.seed,
+            ),
+          )
+        CD =>
+          cd_fit_summary(
+            cd_frobenius_fit(
+              v,
+              k,
+              self.config.max_iter,
+              self.config.tol,
+              self.config.seed,
+            ),
+          )
       }
-    CD =>
-      match
-        cd_frobenius_fit(
-          v,
-          k,
-          self.config.max_iter,
-          self.config.tol,
-          self.config.seed,
-        ) {
-        Ok(r) => (r.w, r.h, r.n_iter, r.loss_value, r.converged)
-        Err(e) => return Err(e)
+    NNDSVD =>
+      // Standard NNDSVD is deterministic and does not use NMFConfig.seed.
+      match nndsvd_init(v, k) {
+        Ok(pair) => {
+          let (w0, h0) = pair
+          match self.config.solver {
+            MU =>
+              mu_fit_summary(
+                mu_frobenius_fit_from(
+                  v,
+                  w0,
+                  h0,
+                  self.config.max_iter,
+                  self.config.tol,
+                ),
+              )
+            CD =>
+              cd_fit_summary(
+                cd_frobenius_fit_from(
+                  v,
+                  w0,
+                  h0,
+                  self.config.max_iter,
+                  self.config.tol,
+                ),
+              )
+          }
+        }
+        Err(e) => Err(e)
       }
+    NNDSVDa =>
+      Err(InvalidConfig("NNDSVDa init is not implemented yet (planned T10)"))
+  }
+  let (w, h, n_iter, loss_value, converged) = match result {
+    Ok(r) => r
+    Err(e) => return Err(e)
   }
   self.fitted = Some({ w, h, n_iter, loss_value, converged, })
   Ok(())
+}
+
+///|
+/// Converts a MU fit result to the uniform tuple used by `NMF::fit`.
+fn mu_fit_summary(
+  r : Result[MuFit, NMFError],
+) -> Result[(Matrix, Matrix, Int32, Double, Bool), NMFError] {
+  match r {
+    Ok(x) => Ok((x.w, x.h, x.n_iter, x.loss_value, x.converged))
+    Err(e) => Err(e)
+  }
+}
+
+///|
+/// Converts a CD fit result to the uniform tuple used by `NMF::fit`.
+fn cd_fit_summary(
+  r : Result[CdFit, NMFError],
+) -> Result[(Matrix, Matrix, Int32, Double, Bool), NMFError] {
+  match r {
+    Ok(x) => Ok((x.w, x.h, x.n_iter, x.loss_value, x.converged))
+    Err(e) => Err(e)
+  }
 }
 
 ///|
