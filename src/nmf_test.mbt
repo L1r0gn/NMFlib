@@ -31,7 +31,7 @@ test "api: every model-dependent call returns NotFitted before training" {
 }
 
 ///|
-test "api: unsupported loss/init/regularization values are explicit errors" {
+test "api: unsupported loss/regularization values are explicit errors" {
   let v = api_v()
   let cases : Array[@nmf.NMFConfig] = [
     @nmf.NMFConfig::new(
@@ -40,7 +40,6 @@ test "api: unsupported loss/init/regularization values are explicit errors" {
       loss=@nmf.Loss::KLDivergence,
     ),
     @nmf.NMFConfig::new(n_components=1, loss=@nmf.Loss::KLDivergence),
-    @nmf.NMFConfig::new(n_components=1, init=@nmf.Init::NNDSVDa),
     @nmf.NMFConfig::new(n_components=1, l1_reg=0.1),
     @nmf.NMFConfig::new(n_components=1, l2_reg=0.1),
   ]

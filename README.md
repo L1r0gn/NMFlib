@@ -2,8 +2,8 @@
 
 纯 MoonBit 实现的非负矩阵分解（NMF）库。`V ≈ W·H`，W、H 非负。
 
-> 状态：v0.1.0 开发中。**T01–T09 已完成**：MU-Frobenius、CD-Frobenius 与 NNDSVD 初始化可用，
-> 107 项测试在 wasm / wasm-gc / js / native 四后端全部通过。
+> 状态：v0.1.0 开发中。**T01–T10 已完成**：MU-Frobenius、CD-Frobenius、NNDSVD/NNDSVDa 初始化可用，
+> 119 项测试在 wasm / wasm-gc / js / native 四后端全部通过。
 
 [![CI](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml/badge.svg)](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml)
 
@@ -21,12 +21,12 @@
 | CD-Frobenius 求解器（循环坐标下降，精确坐标步） | ✅ 已实现（T08） |
 | 内部截断 SVD（幂迭代 + deflation，仅供 NNDSVD，不公开） | ✅ 已实现（T09） |
 | NNDSVD 初始化（标准正负部选对，确定性） | ✅ 已实现（T09） |
-| NNDSVDa 初始化（零元素均值填充） | 计划（T10） |
+| NNDSVDa 初始化（NNDSVD + 零元素全局均值填充，确定性） | ✅ 已实现（T10） |
 | MU-KL 散度 | 计划（T11） |
 | L1/L2 正则（进入优化目标） | 计划（T12） |
 | Hoyer 稀疏度指标 | 计划（T13） |
 
-选择尚未实现的损失/初始化（如 NNDSVDa）、不支持的 CD+KL 组合或非零正则时，`fit` 返回 `Err(InvalidConfig)`（注明目标任务号），不会静默替换。
+选择尚未实现的损失（KL）、不支持的 CD+KL 组合或非零正则时，`fit` 返回 `Err(InvalidConfig)`（注明目标任务号），不会静默替换。
 
 纯 MoonBit、零第三方依赖（仅 core），wasm / wasm-gc / js / native 四后端均执行真实测试。
 
@@ -108,7 +108,7 @@ let config = @nmf.NMFConfig::new(
   n_components=2,            // 分解秩 k，必填，1 ≤ k ≤ min(rows, cols)
   solver=@nmf.Solver::MU,    // 默认 MU；可改为 CD（循环坐标下降，仅支持 Frobenius）
   loss=@nmf.Loss::Frobenius, // 默认 Frobenius（KL 计划 T11）
-  init=@nmf.Init::Random,    // 默认 Random；可改为 NNDSVD（确定性；NNDSVDa 计划 T10）
+  init=@nmf.Init::Random,    // 默认 Random；可改为 NNDSVD / NNDSVDa（确定性）
   max_iter=500,              // 默认 200；耗尽未达标时 converged=false
   tol=1.0e-6,                // 默认 1e-4；相邻目标相对变化 |ΔF|/max(1,|F|) < tol 即收敛
   seed=2026UL,               // 默认 42；同 seed 结果逐位一致
@@ -123,13 +123,28 @@ let config = @nmf.NMFConfig::new(
 `solver=@nmf.Solver::CD` 时 fit 与 transform 都使用 CD 坐标下降，不会回退到 MU。
 `init=@nmf.Init::NNDSVD` 使用内部幂迭代截断 SVD；初始化确定性、不依赖 `seed`，只影响
 fit 的初始 W/H（transform 仍沿用既有行为，用 Random 初始化新数据的 W）。内部 SVD 不是
-公共 API；标准 NNDSVD 不填充零元素（NNDSVDa 的均值填充属于 T10）。
+公共 API。`init=@nmf.Init::NNDSVDa` 在标准 NNDSVD 之后，把 W/H 中**精确零元素**替换为
+原始 V 的全局均值 `mean(V)`；非零元素保持不变。`mean(V)=0`（全零输入）时保持全零，
+不引入随机噪声。
+
+### NNDSVDa 配置示例
+
+```moonbit
+let config = @nmf.NMFConfig::new(
+  n_components=2,
+  init=@nmf.Init::NNDSVDa,
+  seed=42UL, // NNDSVDa 确定性，seed 不影响初始化
+)
+```
+
+与 NNDSVD 一样，NNDSVDa 只影响 fit 的初始 W/H；transform 固定训练 H，使用既有 Random
+约定初始化新数据的 W。
 
 ## 运行测试
 
 ```sh
 moon check --deny-warn   # 类型与警告检查
-moon test                # 全部 107 项测试（默认 wasm 后端）
+moon test                # 全部 119 项测试（默认 wasm 后端）
 moon test --target js    # JS 后端（真实执行全部测试）
 moon test --target wasm-gc
 moon test --target native
@@ -138,10 +153,11 @@ moon fmt --check         # 格式检查
 
 测试分层：Matrix 单元/白盒内核 → Error 行为 → SplitMix64/Random → Frobenius 损失 →
 MU 求解器 → CD 求解器（精确坐标步、目标不增、零曲率/零行列/极小值边界）→
-内部 SVD（幂迭代/deflation/秩不足/重复奇异值/极小值）→ NNDSVD（正负部选对、零退化、
-非负、确定性）→ NMF API → 端到端验收（普通矩阵、已知低秩、全零、非法输入、seed 复现、
-未收敛状态）+ 200 组随机属性扫描。CD 与 NNDSVD 均有独立白盒测试；NNDSVD 的初始目标值
-在固定低秩夹具上与 Random 平均值实测比较。
+内部 SVD（幂迭代/deflation/秩不足/重复奇异值/极小值）→ NNDSVD/NNDSVDa（正负部选对、
+零退化、非负、确定性、零元素均值填充、全零保持）→ NMF API → 端到端验收（普通矩阵、
+已知低秩、全零、非法输入、seed 复现、未收敛状态）+ 200 组随机属性扫描。CD、NNDSVD 与
+NNDSVDa 均有独立白盒测试；NNDSVD 的初始目标值在固定低秩夹具上与 Random 平均值实测比较，
+NNDSVDa 只记录并核实填充结果，不假设其普遍更优。
 
 CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 check、完整测试套件、
 三后端 check+test（后者的 matrix 展开为 native / js / wasm-gc 三个运行实例，共 5 个 Job 实例）。

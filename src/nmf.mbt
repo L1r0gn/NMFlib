@@ -18,9 +18,9 @@ pub(all) enum Loss {
 }
 
 ///|
-/// Initialization selection. `NNDSVD` is implemented in T09 and is
-/// deterministic (seed-independent); `NNDSVDa` remains T10 and is rejected at
-/// validation time.
+/// Initialization selection. `NNDSVD` and `NNDSVDa` are deterministic
+/// (seed-independent); `NNDSVDa` additionally replaces exact zeros in W/H
+/// with the global mean of V.
 #warnings("-unused_constructor")
 pub(all) enum Init {
   Random
@@ -62,9 +62,10 @@ pub fn NMFConfig::new(
 }
 
 ///|
-/// Validates configuration. Unsupported solver/loss/init combinations and
-/// any nonzero regularization are rejected explicitly (remaining
-/// implementations arrive in T10–T12); nothing is silently substituted.
+/// Validates configuration. Unsupported solver/loss combinations and any
+/// nonzero regularization are rejected explicitly (remaining implementations
+/// arrive in T11–T12); nothing is silently substituted. All `Init` variants
+/// are supported.
 fn validate_config(c : NMFConfig) -> Result[Unit, NMFError] {
   if c.solver is CD && c.loss is KLDivergence {
     return Err(InvalidConfig("unsupported combination: CD solver with KL loss"))
@@ -73,14 +74,6 @@ fn validate_config(c : NMFConfig) -> Result[Unit, NMFError] {
     KLDivergence =>
       return Err(InvalidConfig("KL loss is not implemented yet (planned T11)"))
     Frobenius => ()
-  }
-  match c.init {
-    NNDSVDa =>
-      return Err(
-        InvalidConfig("NNDSVDa init is not implemented yet (planned T10)"),
-      )
-    NNDSVD => ()
-    Random => ()
   }
   if c.max_iter < 1 {
     return Err(InvalidConfig("max_iter must be >= 1, got \{c.max_iter}"))
@@ -187,33 +180,33 @@ pub fn NMF::fit(self : NMF, v : Matrix) -> Result[Unit, NMFError] {
       match nndsvd_init(v, k) {
         Ok(pair) => {
           let (w0, h0) = pair
-          match self.config.solver {
-            MU =>
-              mu_fit_summary(
-                mu_frobenius_fit_from(
-                  v,
-                  w0,
-                  h0,
-                  self.config.max_iter,
-                  self.config.tol,
-                ),
-              )
-            CD =>
-              cd_fit_summary(
-                cd_frobenius_fit_from(
-                  v,
-                  w0,
-                  h0,
-                  self.config.max_iter,
-                  self.config.tol,
-                ),
-              )
-          }
+          fit_from_initial(
+            v,
+            w0,
+            h0,
+            self.config.solver,
+            self.config.max_iter,
+            self.config.tol,
+          )
         }
         Err(e) => Err(e)
       }
     NNDSVDa =>
-      Err(InvalidConfig("NNDSVDa init is not implemented yet (planned T10)"))
+      // NNDSVDa reuses standard NNDSVD and fills its exact zeros with mean(V).
+      match nndsvda_init(v, k) {
+        Ok(pair) => {
+          let (w0, h0) = pair
+          fit_from_initial(
+            v,
+            w0,
+            h0,
+            self.config.solver,
+            self.config.max_iter,
+            self.config.tol,
+          )
+        }
+        Err(e) => Err(e)
+      }
   }
   let (w, h, n_iter, loss_value, converged) = match result {
     Ok(r) => r
@@ -221,6 +214,22 @@ pub fn NMF::fit(self : NMF, v : Matrix) -> Result[Unit, NMFError] {
   }
   self.fitted = Some({ w, h, n_iter, loss_value, converged, })
   Ok(())
+}
+
+///|
+/// Runs the selected solver from already-initialized non-negative factors.
+fn fit_from_initial(
+  v : Matrix,
+  w : Matrix,
+  h : Matrix,
+  solver : Solver,
+  max_iter : Int32,
+  tol : Double,
+) -> Result[(Matrix, Matrix, Int32, Double, Bool), NMFError] {
+  match solver {
+    MU => mu_fit_summary(mu_frobenius_fit_from(v, w, h, max_iter, tol))
+    CD => cd_fit_summary(cd_frobenius_fit_from(v, w, h, max_iter, tol))
+  }
 }
 
 ///|

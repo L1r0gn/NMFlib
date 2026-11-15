@@ -383,11 +383,6 @@ test "wb cd: small budgets and illegal configs are honest errors" {
   )
   assert_true(cd_kl.fit(v) is Err(InvalidConfig(_)))
   assert_true(cd_kl.w() is Err(NotFitted))
-  // CD + NNDSVDa is still unsupported until T10.
-  let cd_nndsvda = NMF::new(
-    NMFConfig::new(n_components=1, solver=Solver::CD, init=Init::NNDSVDa),
-  )
-  assert_true(cd_nndsvda.fit(v) is Err(InvalidConfig(_)))
   // Illegal inputs are rejected and leave the model untrained.
   let neg = cd_mat(2, 2, [1.0, 2.0, 3.0, -0.5])
   let neg_model = NMF::new(NMFConfig::new(n_components=1, solver=Solver::CD))

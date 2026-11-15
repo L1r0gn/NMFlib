@@ -69,9 +69,9 @@ fn random_init_w(
 /// `H[0,:] = sqrt(sigma0) * abs(v0)`. Later triplets choose the positive or
 /// negative part pair with the larger norm product and scale W/H symmetrically
 /// by `sqrt(sigma * ||u_part|| * ||v_part||)`, normalizing each part.
-/// Degenerate components remain zero; no mean filling (NNDSVDa is T10). Start
-/// vectors use a fixed internal seed, so NNDSVD is deterministic and
-/// independent of `NMFConfig.seed`.
+/// Degenerate components remain zero; `nndsvda_init` adds the NNDSVDa zero
+/// mean-filling step. Start vectors use a fixed internal seed, so NNDSVD is
+/// deterministic and independent of `NMFConfig.seed`.
 fn nndsvd_init(v : Matrix, k : Int32) -> Result[(Matrix, Matrix), NMFError] {
   let components = match svd_top_k(v, k) {
     Ok(c) => c
@@ -185,6 +185,125 @@ fn nndsvd_init(v : Matrix, k : Int32) -> Result[(Matrix, Matrix), NMFError] {
   }
   if !all_finite(w.data) || !all_finite(h.data) {
     return Err(NumericalError("NNDSVD factors became non-finite"))
+  }
+  Ok((w, h))
+}
+
+///|
+/// Mean of a matrix computed after scaling by its largest absolute entry.
+/// Every scaled term is in [-1, 1], so the intermediate sum cannot overflow;
+/// the average is rescaled at the end. Used only as an overflow fallback.
+fn scaled_mean(v : Matrix, max_abs : Double) -> Result[Double, NMFError] {
+  let n = (v.rows * v.cols).to_double()
+  let mut sum = 0.0
+  for x in v.data {
+    sum = sum + x / max_abs
+  }
+  if sum.is_nan() || sum.is_inf() {
+    return Err(NumericalError("mean: scaled sum is non-finite"))
+  }
+  let mean = sum / n * max_abs
+  if mean.is_nan() || mean.is_inf() {
+    return Err(NumericalError("mean: scaled result is non-finite"))
+  }
+  Ok(mean)
+}
+
+///|
+/// Global arithmetic mean of all V entries: `sum(V) / (rows * cols)`.
+///
+/// The direct sum is used when `max_abs(V) * count` is finite, which bounds
+/// the absolute sum and therefore rules out overflow. For very large finite
+/// entries the computation falls back to `scaled_mean`, preserving the
+/// mathematical mean without producing Infinity. Empty matrices are rejected;
+/// an all-zero matrix returns exactly 0.
+fn matrix_mean(v : Matrix) -> Result[Double, NMFError] {
+  if v.data.length() == 0 {
+    return Err(InvalidMatrixShape("mean of an empty matrix is undefined"))
+  }
+  let n = (v.rows * v.cols).to_double()
+  let mut max_abs = 0.0
+  for x in v.data {
+    let a = x.abs()
+    if a > max_abs {
+      max_abs = a
+    }
+  }
+  if max_abs.is_nan() || max_abs.is_inf() {
+    return Err(NumericalError("mean: matrix contains a non-finite entry"))
+  }
+  if max_abs == 0.0 {
+    return Ok(0.0)
+  }
+  let bound = max_abs * n
+  if bound.is_nan() || bound.is_inf() {
+    return scaled_mean(v, max_abs)
+  }
+  let mut sum = 0.0
+  for x in v.data {
+    sum = sum + x
+  }
+  if sum.is_nan() || sum.is_inf() {
+    return scaled_mean(v, max_abs)
+  }
+  let mean = sum / n
+  if mean.is_nan() || mean.is_inf() {
+    return Err(NumericalError("mean: result is non-finite"))
+  }
+  Ok(mean)
+}
+
+///|
+/// NNDSVDa initialization: standard NNDSVD followed by replacement of every
+/// exact zero entry of W and H with the global mean of the *original* V.
+///
+/// Non-zero NNDSVD entries are left untouched; no random noise or additional
+/// SVD is introduced. When `mean(V) == 0` (all-zero V for non-negative input),
+/// the standard all-zero factors are preserved. Non-finite means, negative
+/// means, or non-finite/negative factors are reported as `NumericalError`
+/// instead of being silently written into the factors.
+fn nndsvda_init(v : Matrix, k : Int32) -> Result[(Matrix, Matrix), NMFError] {
+  if v.data.length() == 0 {
+    return Err(InvalidMatrixShape("NNDSVDa: V must be non-empty"))
+  }
+  let (w, h) = match nndsvd_init(v, k) {
+    Ok(pair) => pair
+    Err(e) => return Err(e)
+  }
+  let mean = match matrix_mean(v) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  if mean.is_nan() || mean.is_inf() {
+    return Err(NumericalError("NNDSVDa: mean of V is non-finite"))
+  }
+  if mean < 0.0 {
+    return Err(NumericalError("NNDSVDa: mean of V is negative"))
+  }
+  if mean > 0.0 {
+    for idx in 0..<w.data.length() {
+      if w.data[idx] == 0.0 {
+        w.data[idx] = mean
+      }
+    }
+    for idx in 0..<h.data.length() {
+      if h.data[idx] == 0.0 {
+        h.data[idx] = mean
+      }
+    }
+  }
+  if !all_finite(w.data) || !all_finite(h.data) {
+    return Err(NumericalError("NNDSVDa factors became non-finite"))
+  }
+  for x in w.data {
+    if x < 0.0 {
+      return Err(NumericalError("NNDSVDa produced a negative W entry"))
+    }
+  }
+  for x in h.data {
+    if x < 0.0 {
+      return Err(NumericalError("NNDSVDa produced a negative H entry"))
+    }
   }
   Ok((w, h))
 }

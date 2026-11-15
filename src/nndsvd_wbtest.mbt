@@ -420,9 +420,17 @@ test "wb nndsvd: fit consumes NNDSVD factors without Random fallback" {
 }
 
 ///|
-test "wb nndsvd: NNDSVDa remains unsupported" {
+test "wb nndsvd: NNDSVDa is a supported initialization variant" {
   let v = nnd_test_mat(2, 2, [1.0, 2.0, 3.0, 4.0])
   let model = NMF::new(NMFConfig::new(n_components=1, init=Init::NNDSVDa))
-  assert_true(model.fit(v) is Err(InvalidConfig(_)))
-  assert_true(model.w() is Err(NotFitted))
+  assert_eq(model.fit(v), Ok(()))
+  let w = match model.w() {
+    Ok(x) => x
+    Err(e) => abort("unexpected: \{e}")
+  }
+  let h = match model.h() {
+    Ok(x) => x
+    Err(e) => abort("unexpected: \{e}")
+  }
+  nnd_test_factor_ok(w, h, 2, 1, 2)
 }
