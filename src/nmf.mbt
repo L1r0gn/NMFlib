@@ -1,6 +1,7 @@
 ///|
-/// NMF solver selection. `CD` is part of the frozen v0.1.0 API surface but
-/// lands in T08; selecting it before then returns `InvalidConfig`.
+/// NMF solver selection. Both solvers minimize the Frobenius objective;
+/// `CD` currently supports only `Loss::Frobenius` (CD + KL is rejected at
+/// validation time).
 #warnings("-unused_constructor")
 pub(all) enum Solver {
   MU
@@ -60,19 +61,12 @@ pub fn NMFConfig::new(
 }
 
 ///|
-/// Validates configuration. Unsupported solver/loss/init values and any
-/// nonzero regularization are rejected explicitly (implementations arrive in
-/// T08–T12); nothing is silently substituted.
+/// Validates configuration. Unsupported solver/loss/init combinations and
+/// any nonzero regularization are rejected explicitly (remaining
+/// implementations arrive in T09–T12); nothing is silently substituted.
 fn validate_config(c : NMFConfig) -> Result[Unit, NMFError] {
   if c.solver is CD && c.loss is KLDivergence {
     return Err(InvalidConfig("unsupported combination: CD solver with KL loss"))
-  }
-  match c.solver {
-    CD =>
-      return Err(
-        InvalidConfig("solver CD is not implemented yet (planned T08)"),
-      )
-    MU => ()
   }
   match c.loss {
     KLDivergence =>
@@ -166,24 +160,33 @@ pub fn NMF::fit(self : NMF, v : Matrix) -> Result[Unit, NMFError] {
   if k > max_k {
     return Err(InvalidRank(k))
   }
-  let result = match
-    mu_frobenius_fit(
-      v,
-      k,
-      self.config.max_iter,
-      self.config.tol,
-      self.config.seed,
-    ) {
-    Ok(r) => r
-    Err(e) => return Err(e)
+  let (w, h, n_iter, loss_value, converged) = match self.config.solver {
+    MU =>
+      match
+        mu_frobenius_fit(
+          v,
+          k,
+          self.config.max_iter,
+          self.config.tol,
+          self.config.seed,
+        ) {
+        Ok(r) => (r.w, r.h, r.n_iter, r.loss_value, r.converged)
+        Err(e) => return Err(e)
+      }
+    CD =>
+      match
+        cd_frobenius_fit(
+          v,
+          k,
+          self.config.max_iter,
+          self.config.tol,
+          self.config.seed,
+        ) {
+        Ok(r) => (r.w, r.h, r.n_iter, r.loss_value, r.converged)
+        Err(e) => return Err(e)
+      }
   }
-  self.fitted = Some({
-    w: result.w,
-    h: result.h,
-    n_iter: result.n_iter,
-    loss_value: result.loss_value,
-    converged: result.converged,
-  })
+  self.fitted = Some({ w, h, n_iter, loss_value, converged, })
   Ok(())
 }
 
@@ -223,13 +226,24 @@ pub fn NMF::transform(self : NMF, x : Matrix) -> Result[Matrix, NMFError] {
       }
     }
   }
-  mu_frobenius_transform(
-    x,
-    f.h,
-    self.config.max_iter,
-    self.config.tol,
-    self.config.seed,
-  )
+  match self.config.solver {
+    MU =>
+      mu_frobenius_transform(
+        x,
+        f.h,
+        self.config.max_iter,
+        self.config.tol,
+        self.config.seed,
+      )
+    CD =>
+      cd_frobenius_transform(
+        x,
+        f.h,
+        self.config.max_iter,
+        self.config.tol,
+        self.config.seed,
+      )
+  }
 }
 
 ///|
@@ -303,7 +317,7 @@ pub fn NMF::h(self : NMF) -> Result[Matrix, NMFError] {
 }
 
 ///|
-/// Number of MU iterations actually executed. `NotFitted` before training.
+/// Number of solver iterations actually executed. `NotFitted` before training.
 pub fn NMF::n_iter(self : NMF) -> Result[Int32, NMFError] {
   match self.fitted {
     Some(f) => Ok(f.n_iter)
