@@ -5,9 +5,9 @@
 > 状态：v0.1.0 开发中。**T01–T07 已完成**：MU-Frobenius 完整闭环可用，74 项测试在
 > wasm / wasm-gc / js / native 四后端全部通过。
 
-<!-- 远程仓库确认后启用 CI 徽章：
-[![CI](https://github.com/<owner>/nmf/actions/workflows/ci.yml/badge.svg)](https://github.com/<owner>/nmf/actions/workflows/ci.yml)
--->
+[![CI](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml/badge.svg)](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml)
+
+仓库地址：<https://github.com/L1r0gn/NMFlib>
 
 ## 功能支持情况
 
@@ -36,7 +36,13 @@
 moon add L1r0gn/nmf
 ```
 
-当前可直接克隆源码使用（尚未发布）。
+尚未发布到 mooncakes.io，当前可直接克隆源码使用：
+
+```sh
+git clone https://github.com/L1r0gn/NMFlib.git
+cd NMFlib
+moon run examples/quickstart
+```
 
 ## 快速上手
 
@@ -129,9 +135,12 @@ MU 求解器 → NMF API → 端到端验收（普通矩阵、已知低秩、全
 未收敛状态）+ 200 组随机属性扫描。固定小型矩阵与手算参考值为主，随机数据仅作补充。
 
 CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 check、完整测试套件、
-三后端 check+test。工具链版本采用 fail-closed 固定策略（见 `scripts/ci-install-moonbit.sh`）：
-官方安装脚本安装后断言版本号，不符即失败。远程仓库尚未创建，CI 尚未在 GitHub 上实际运行；
-上述步骤均已在本地按 CI 相同命令验证。
+三后端 check+test（后者的 matrix 展开为 native / js / wasm-gc 三个运行实例，共 5 个 Job 实例）。
+工具链版本采用 fail-closed 固定策略（见 `scripts/ci-install-moonbit.sh`）：官方安装脚本安装后
+断言版本号，不符即失败。
+
+CI 已在 GitHub Actions 实际运行并通过（2026-11-15，5 个 Job 实例全部成功）。
+上述命令亦已在本地按 CI 相同配置验证通过（本地工具链 0.1.20261028；CI 锁定 0.1.20261104）。
 
 ## 与现有实现的关系
 
