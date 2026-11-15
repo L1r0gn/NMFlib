@@ -2,8 +2,8 @@
 
 纯 MoonBit 实现的非负矩阵分解（NMF）库。`V ≈ W·H`，W、H 非负。
 
-> 状态：v0.1.0 开发中。**T01–T10 已完成**：MU-Frobenius、CD-Frobenius、NNDSVD/NNDSVDa 初始化可用，
-> 119 项测试在 wasm / wasm-gc / js / native 四后端全部通过。
+> 状态：v0.1.0 开发中。**T01–T11 已完成**：MU-Frobenius、CD-Frobenius、NNDSVD/NNDSVDa 初始化与 MU-KL 可用，
+> 142 项测试在 wasm / wasm-gc / js / native 四后端全部通过。
 
 [![CI](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml/badge.svg)](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml)
 
@@ -22,11 +22,20 @@
 | 内部截断 SVD（幂迭代 + deflation，仅供 NNDSVD，不公开） | ✅ 已实现（T09） |
 | NNDSVD 初始化（标准正负部选对，确定性） | ✅ 已实现（T09） |
 | NNDSVDa 初始化（NNDSVD + 零元素全局均值填充，确定性） | ✅ 已实现（T10） |
-| MU-KL 散度 | 计划（T11） |
+| 广义 KL 散度（Generalized KL，MU 求解器） | ✅ 已实现（T11） |
+| MU-KL 求解器（乘法更新，零值/零行列有明确策略） | ✅ 已实现（T11） |
+| MU-KL 的 transform（固定 H，KL 更新 W） | ✅ 已实现（T11） |
 | L1/L2 正则（进入优化目标） | 计划（T12） |
 | Hoyer 稀疏度指标 | 计划（T13） |
 
-选择尚未实现的损失（KL）、不支持的 CD+KL 组合或非零正则时，`fit` 返回 `Err(InvalidConfig)`（注明目标任务号），不会静默替换。
+选择不支持的 CD+KL 组合或非零正则时，`fit` 返回 `Err(InvalidConfig)`，不会静默切换求解器或损失。
+
+### Solver × Loss 兼容矩阵
+
+| Solver | Frobenius | KL |
+|---|---|---|
+| MU | ✅ 已实现 | ✅ 已实现（T11） |
+| CD | ✅ 已实现 | ❌ `InvalidConfig` |
 
 纯 MoonBit、零第三方依赖（仅 core），wasm / wasm-gc / js / native 四后端均执行真实测试。
 
@@ -107,7 +116,7 @@ reconstruction error = 1.8065620213588327
 let config = @nmf.NMFConfig::new(
   n_components=2,            // 分解秩 k，必填，1 ≤ k ≤ min(rows, cols)
   solver=@nmf.Solver::MU,    // 默认 MU；可改为 CD（循环坐标下降，仅支持 Frobenius）
-  loss=@nmf.Loss::Frobenius, // 默认 Frobenius（KL 计划 T11）
+  loss=@nmf.Loss::Frobenius, // 默认 Frobenius；MU 可改为 KLDivergence（CD 不支持 KL）
   init=@nmf.Init::Random,    // 默认 Random；可改为 NNDSVD / NNDSVDa（确定性）
   max_iter=500,              // 默认 200；耗尽未达标时 converged=false
   tol=1.0e-6,                // 默认 1e-4；相邻目标相对变化 |ΔF|/max(1,|F|) < tol 即收敛
@@ -140,11 +149,45 @@ let config = @nmf.NMFConfig::new(
 与 NNDSVD 一样，NNDSVDa 只影响 fit 的初始 W/H；transform 固定训练 H，使用既有 Random
 约定初始化新数据的 W。
 
+### MU-KL（广义 KL 散度）
+
+MU 求解器支持广义 KL 目标（不是归一化概率分布 KL，不要求元素和为 1）：
+
+```text
+D_KL(V ‖ WH) = Σ [ V·log(V/WH) − V + WH ]
+```
+
+零值约定：
+
+- `V=0, WH=0`：该项为 0，不计算 0/0；
+- `V=0, WH>0`：对数项按极限为 0，该项为 WH；
+- `V>0, WH=0`：散度为 +∞；`fit`/`kl_divergence` 返回 `NumericalError`，不伪造有限损失。
+
+实现使用 `V(log V − log WH) − V + WH` 代替 `V/WH`，避免比值溢出；对累计和使用补偿求和。
+不使用全局 epsilon 下限：更新分母为零时，对应 H 行/W 列对 WH 无影响，规范化为 0；
+非零分母精确使用，非有限值明确报错。KL 模型：
+
+- `model.loss_value()` 返回真实 KL 散度；
+- `model.reconstruction_error(v)` 仍返回 Frobenius 范数 `‖V−WH‖_F`（向后兼容）；
+- `model.transform(x)` 固定训练 H，用 KL 的 W 更新公式。
+
+```moonbit
+let config = @nmf.NMFConfig::new(
+  n_components=2,
+  solver=@nmf.Solver::MU,
+  loss=@nmf.Loss::KLDivergence,
+  seed=42UL,
+)
+```
+
+NNDSVD/NNDSVDa 可用于 MU-KL，但公共初始化结果不被修改，也不静默替换 Init；
+如果初始 WH 在 V>0 处为零，MU-KL 明确返回 `NumericalError`。
+
 ## 运行测试
 
 ```sh
 moon check --deny-warn   # 类型与警告检查
-moon test                # 全部 119 项测试（默认 wasm 后端）
+moon test                # 全部 142 项测试（默认 wasm 后端）
 moon test --target js    # JS 后端（真实执行全部测试）
 moon test --target wasm-gc
 moon test --target native
@@ -152,12 +195,12 @@ moon fmt --check         # 格式检查
 ```
 
 测试分层：Matrix 单元/白盒内核 → Error 行为 → SplitMix64/Random → Frobenius 损失 →
-MU 求解器 → CD 求解器（精确坐标步、目标不增、零曲率/零行列/极小值边界）→
+广义 KL 损失（手算/零值/非负性/溢出）→ MU 求解器（Frobenius + KL；KL 单轮更新、目标不增、
+零行列、初始化兼容）→ CD 求解器（精确坐标步、目标不增、零曲率/零行列/极小值边界）→
 内部 SVD（幂迭代/deflation/秩不足/重复奇异值/极小值）→ NNDSVD/NNDSVDa（正负部选对、
 零退化、非负、确定性、零元素均值填充、全零保持）→ NMF API → 端到端验收（普通矩阵、
-已知低秩、全零、非法输入、seed 复现、未收敛状态）+ 200 组随机属性扫描。CD、NNDSVD 与
-NNDSVDa 均有独立白盒测试；NNDSVD 的初始目标值在固定低秩夹具上与 Random 平均值实测比较，
-NNDSVDa 只记录并核实填充结果，不假设其普遍更优。
+已知低秩、全零、非法输入、seed 复现、未收敛状态）+ 200 组随机属性扫描。CD、NNDSVD、
+NNDSVDa、KL 与 MU-KL 均有独立白盒测试；KL 的 H/W 更新与目标单调性单独验证。
 
 CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 check、完整测试套件、
 三后端 check+test（后者的 matrix 展开为 native / js / wasm-gc 三个运行实例，共 5 个 Job 实例）。

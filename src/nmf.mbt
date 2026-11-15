@@ -1,7 +1,6 @@
 ///|
-/// NMF solver selection. Both solvers minimize the Frobenius objective;
-/// `CD` currently supports only `Loss::Frobenius` (CD + KL is rejected at
-/// validation time).
+/// NMF solver selection. MU supports both Frobenius and KL losses; CD supports
+/// only Frobenius (CD + KL is rejected at validation time).
 #warnings("-unused_constructor")
 pub(all) enum Solver {
   MU
@@ -9,8 +8,8 @@ pub(all) enum Solver {
 }
 
 ///|
-/// Loss function selection. `KLDivergence` lands in T11 (MU only);
-/// selecting it before then returns `InvalidConfig`.
+/// Loss function selection. `KLDivergence` uses the generalized KL objective
+/// with MU; CD + KL is rejected. `Frobenius` remains the default.
 #warnings("-unused_constructor")
 pub(all) enum Loss {
   Frobenius
@@ -63,17 +62,11 @@ pub fn NMFConfig::new(
 
 ///|
 /// Validates configuration. Unsupported solver/loss combinations and any
-/// nonzero regularization are rejected explicitly (remaining implementations
-/// arrive in T11–T12); nothing is silently substituted. All `Init` variants
-/// are supported.
+/// nonzero regularization are rejected explicitly (regularization arrives in
+/// T12); nothing is silently substituted. All `Init` variants are supported.
 fn validate_config(c : NMFConfig) -> Result[Unit, NMFError] {
   if c.solver is CD && c.loss is KLDivergence {
     return Err(InvalidConfig("unsupported combination: CD solver with KL loss"))
-  }
-  match c.loss {
-    KLDivergence =>
-      return Err(InvalidConfig("KL loss is not implemented yet (planned T11)"))
-    Frobenius => ()
   }
   if c.max_iter < 1 {
     return Err(InvalidConfig("max_iter must be >= 1, got \{c.max_iter}"))
@@ -155,25 +148,45 @@ pub fn NMF::fit(self : NMF, v : Matrix) -> Result[Unit, NMFError] {
     Random =>
       match self.config.solver {
         MU =>
-          mu_fit_summary(
-            mu_frobenius_fit(
-              v,
-              k,
-              self.config.max_iter,
-              self.config.tol,
-              self.config.seed,
-            ),
-          )
+          match self.config.loss {
+            Frobenius =>
+              mu_fit_summary(
+                mu_frobenius_fit(
+                  v,
+                  k,
+                  self.config.max_iter,
+                  self.config.tol,
+                  self.config.seed,
+                ),
+              )
+            KLDivergence =>
+              mu_fit_summary(
+                mu_kl_fit(
+                  v,
+                  k,
+                  self.config.max_iter,
+                  self.config.tol,
+                  self.config.seed,
+                ),
+              )
+          }
         CD =>
-          cd_fit_summary(
-            cd_frobenius_fit(
-              v,
-              k,
-              self.config.max_iter,
-              self.config.tol,
-              self.config.seed,
-            ),
-          )
+          match self.config.loss {
+            Frobenius =>
+              cd_fit_summary(
+                cd_frobenius_fit(
+                  v,
+                  k,
+                  self.config.max_iter,
+                  self.config.tol,
+                  self.config.seed,
+                ),
+              )
+            KLDivergence =>
+              Err(
+                InvalidConfig("unsupported combination: CD solver with KL loss"),
+              )
+          }
       }
     NNDSVD =>
       // Standard NNDSVD is deterministic and does not use NMFConfig.seed.
@@ -185,6 +198,7 @@ pub fn NMF::fit(self : NMF, v : Matrix) -> Result[Unit, NMFError] {
             w0,
             h0,
             self.config.solver,
+            self.config.loss,
             self.config.max_iter,
             self.config.tol,
           )
@@ -201,6 +215,7 @@ pub fn NMF::fit(self : NMF, v : Matrix) -> Result[Unit, NMFError] {
             w0,
             h0,
             self.config.solver,
+            self.config.loss,
             self.config.max_iter,
             self.config.tol,
           )
@@ -223,12 +238,24 @@ fn fit_from_initial(
   w : Matrix,
   h : Matrix,
   solver : Solver,
+  loss : Loss,
   max_iter : Int32,
   tol : Double,
 ) -> Result[(Matrix, Matrix, Int32, Double, Bool), NMFError] {
   match solver {
-    MU => mu_fit_summary(mu_frobenius_fit_from(v, w, h, max_iter, tol))
-    CD => cd_fit_summary(cd_frobenius_fit_from(v, w, h, max_iter, tol))
+    MU =>
+      match loss {
+        Frobenius =>
+          mu_fit_summary(mu_frobenius_fit_from(v, w, h, max_iter, tol))
+        KLDivergence => mu_fit_summary(mu_kl_fit_from(v, w, h, max_iter, tol))
+      }
+    CD =>
+      match loss {
+        Frobenius =>
+          cd_fit_summary(cd_frobenius_fit_from(v, w, h, max_iter, tol))
+        KLDivergence =>
+          Err(InvalidConfig("unsupported combination: CD solver with KL loss"))
+      }
   }
 }
 
@@ -292,21 +319,37 @@ pub fn NMF::transform(self : NMF, x : Matrix) -> Result[Matrix, NMFError] {
   }
   match self.config.solver {
     MU =>
-      mu_frobenius_transform(
-        x,
-        f.h,
-        self.config.max_iter,
-        self.config.tol,
-        self.config.seed,
-      )
+      match self.config.loss {
+        Frobenius =>
+          mu_frobenius_transform(
+            x,
+            f.h,
+            self.config.max_iter,
+            self.config.tol,
+            self.config.seed,
+          )
+        KLDivergence =>
+          mu_kl_transform(
+            x,
+            f.h,
+            self.config.max_iter,
+            self.config.tol,
+            self.config.seed,
+          )
+      }
     CD =>
-      cd_frobenius_transform(
-        x,
-        f.h,
-        self.config.max_iter,
-        self.config.tol,
-        self.config.seed,
-      )
+      match self.config.loss {
+        Frobenius =>
+          cd_frobenius_transform(
+            x,
+            f.h,
+            self.config.max_iter,
+            self.config.tol,
+            self.config.seed,
+          )
+        KLDivergence =>
+          Err(InvalidConfig("unsupported combination: CD solver with KL loss"))
+      }
   }
 }
 
@@ -333,8 +376,9 @@ pub fn NMF::inverse_transform(
 
 ///|
 /// Reconstruction error `‖V − WH‖_F` (Frobenius norm, sklearn semantics).
-/// Always the norm, regardless of the training loss; equals
-/// `sqrt(2 * loss_value)` for Frobenius training on the same V.
+/// Always the norm, regardless of the training loss; for Frobenius training it
+/// equals `sqrt(2 * loss_value)`. For KL training `loss_value` is the KL
+/// divergence and this method still returns the Frobenius reconstruction norm.
 /// V must have the training dimensions.
 pub fn NMF::reconstruction_error(
   self : NMF,
@@ -390,7 +434,8 @@ pub fn NMF::n_iter(self : NMF) -> Result[Int32, NMFError] {
 }
 
 ///|
-/// Final true objective value `½‖V − WH‖²_F`. `NotFitted` before training.
+/// Final true objective value: `½‖V − WH‖²_F` for Frobenius training, or the
+/// generalized KL divergence for KL training. `NotFitted` before training.
 pub fn NMF::loss_value(self : NMF) -> Result[Double, NMFError] {
   match self.fitted {
     Some(f) => Ok(f.loss_value)
