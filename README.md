@@ -254,8 +254,10 @@ CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 
 工具链版本采用 fail-closed 固定策略（见 `scripts/ci-install-moonbit.sh`）：官方安装脚本安装后
 断言版本号，不符即失败。
 
-CI 已在 GitHub Actions 实际运行并通过（2026-11-15，5 个 Job 实例全部成功）。
-上述命令亦已在本地按 CI 相同配置验证通过（本地工具链 0.1.20261028；CI 锁定 0.1.20261104）。
+CI 已在 GitHub Actions 实际运行并通过：T12 提交 `b4a7037` 的 run #7（2026-11-16），
+5 个 Job 实例（MoonBit Check、Unit & Integration Tests、Backend native / js / wasm-gc）全部成功。
+上述命令亦已在本地按 CI 相同配置验证通过（本地工具链 0.1.20261028；CI 锁定 0.1.20261104），
+166 项测试在四后端各执行一遍。
 
 ## 与现有实现的关系
 
