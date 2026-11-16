@@ -70,7 +70,7 @@ test "wb cd: single coordinate matches the exact line minimizer" {
   matmul_at_b_into(w, w, wtw)
   matmul_at_b_into(w, v, wv)
   let grad = Array::make(1, 0.0)
-  match cd_update_h(wtw, wv, h, grad) {
+  match cd_update_h(wtw, wv, h, grad, no_reg) {
     Ok(_) => ()
     Err(e) => abort("unexpected H update error: \{e}")
   }
@@ -84,7 +84,7 @@ test "wb cd: single coordinate matches the exact line minimizer" {
   matmul_a_bt_into(h2, h2, hh)
   matmul_a_bt_into(v, h2, vht)
   let grad2 = Array::make(1, 0.0)
-  match cd_update_w(hh, vht, w2, grad2) {
+  match cd_update_w(hh, vht, w2, grad2, no_reg) {
     Ok(_) => ()
     Err(e) => abort("unexpected W update error: \{e}")
   }
@@ -102,7 +102,7 @@ test "wb cd: H and W sweeps preserve dims, non-negativity, and finiteness" {
   matmul_at_b_into(w, w, wtw)
   matmul_at_b_into(w, v, wv)
   let grad = Array::make(2, 0.0)
-  match cd_update_h(wtw, wv, h, grad) {
+  match cd_update_h(wtw, wv, h, grad, no_reg) {
     Ok(_) => ()
     Err(e) => abort("unexpected H update error: \{e}")
   }
@@ -131,7 +131,7 @@ test "wb cd: H and W sweeps preserve dims, non-negativity, and finiteness" {
   matmul_a_bt_into(h, h, hh)
   matmul_a_bt_into(v, h, vht)
   let grad2 = Array::make(2, 0.0)
-  match cd_update_w(hh, vht, w, grad2) {
+  match cd_update_w(hh, vht, w, grad2, no_reg) {
     Ok(_) => ()
     Err(e) => abort("unexpected W update error: \{e}")
   }
@@ -158,7 +158,7 @@ test "wb cd: H and W sweeps do not increase the objective" {
   matmul_at_b_into(w, w, wtw)
   matmul_at_b_into(w, v, wv)
   let grad = Array::make(2, 0.0)
-  match cd_update_h(wtw, wv, h, grad) {
+  match cd_update_h(wtw, wv, h, grad, no_reg) {
     Ok(_) => ()
     Err(e) => abort("unexpected H update error: \{e}")
   }
@@ -169,7 +169,7 @@ test "wb cd: H and W sweeps do not increase the objective" {
   matmul_a_bt_into(h, h, hh)
   matmul_a_bt_into(v, h, vht)
   let grad2 = Array::make(2, 0.0)
-  match cd_update_w(hh, vht, w, grad2) {
+  match cd_update_w(hh, vht, w, grad2, no_reg) {
     Ok(_) => ()
     Err(e) => abort("unexpected W update error: \{e}")
   }
@@ -185,7 +185,7 @@ test "wb cd: full iterations do not increase the objective across budgets" {
   // tol=0 forces the full budget, so each run is a prefix of the next.
   let mut prev = 1.0e300
   for budget in [1, 5, 20, 100] {
-    let fit = cd_unwrap_fit(cd_frobenius_fit(v, 2, budget, 0.0, 11UL))
+    let fit = cd_unwrap_fit(cd_frobenius_fit(v, 2, budget, 0.0, 11UL, no_reg))
     assert_true(fit.loss_value <= prev + cd_numerical_tol(prev))
     prev = fit.loss_value
   }
@@ -257,7 +257,7 @@ test "wb cd: known low-rank product is reconstructed accurately" {
   let w_true = cd_mat(5, 2, [1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 2.0, 0.0, 0.0, 2.0])
   let h_true = cd_mat(2, 4, [1.0, 2.0, 0.0, 1.0, 0.0, 1.0, 3.0, 2.0])
   let v = cd_unwrap_matrix(matmul(w_true, h_true))
-  let fit = cd_unwrap_fit(cd_frobenius_fit(v, 2, 2000, 1.0e-10, 42UL))
+  let fit = cd_unwrap_fit(cd_frobenius_fit(v, 2, 2000, 1.0e-10, 42UL, no_reg))
   cd_assert_factor_ok(fit.w, 5, 2)
   cd_assert_factor_ok(fit.h, 2, 4)
   let wh = cd_unwrap_matrix(matmul(fit.w, fit.h))
@@ -278,14 +278,14 @@ test "wb cd: known low-rank product is reconstructed accurately" {
 test "wb cd: all-zero and degenerate inputs stay finite" {
   // All-zero V: objective is 0 and the result must be exact and honest.
   let z = zeros_buf(3, 4)
-  let zfit = cd_unwrap_fit(cd_frobenius_fit(z, 2, 50, 1.0e-4, 42UL))
+  let zfit = cd_unwrap_fit(cd_frobenius_fit(z, 2, 50, 1.0e-4, 42UL, no_reg))
   cd_assert_factor_ok(zfit.w, 3, 2)
   cd_assert_factor_ok(zfit.h, 2, 4)
   assert_eq(zfit.loss_value, 0.0)
   assert_true(zfit.converged)
   // Zero row and zero column in V.
   let v = cd_mat(3, 3, [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0])
-  let fit = cd_unwrap_fit(cd_frobenius_fit(v, 2, 200, 1.0e-8, 7UL))
+  let fit = cd_unwrap_fit(cd_frobenius_fit(v, 2, 200, 1.0e-8, 7UL, no_reg))
   cd_assert_factor_ok(fit.w, 3, 2)
   cd_assert_factor_ok(fit.h, 2, 3)
   let err = cd_objective(v, fit.w, fit.h)
@@ -295,7 +295,9 @@ test "wb cd: all-zero and degenerate inputs stay finite" {
   let w_corr = cd_mat(4, 2, [1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0])
   let h_corr = cd_mat(2, 3, [1.0, 2.0, 1.0, 0.0, 1.0, 2.0])
   let v_corr = cd_unwrap_matrix(matmul(w_corr, h_corr))
-  let cfit = cd_unwrap_fit(cd_frobenius_fit(v_corr, 2, 500, 1.0e-8, 13UL))
+  let cfit = cd_unwrap_fit(
+    cd_frobenius_fit(v_corr, 2, 500, 1.0e-8, 13UL, no_reg),
+  )
   cd_assert_factor_ok(cfit.w, 4, 2)
   cd_assert_factor_ok(cfit.h, 2, 3)
   let objective = cd_objective(v_corr, cfit.w, cfit.h)
@@ -316,7 +318,7 @@ test "wb cd: zero curvature coordinates are handled without division" {
   matmul_at_b_into(w, w, wtw)
   matmul_at_b_into(w, v, wv)
   let grad = Array::make(2, 0.0)
-  match cd_update_h(wtw, wv, h, grad) {
+  match cd_update_h(wtw, wv, h, grad, no_reg) {
     Ok(_) => ()
     Err(e) => abort("unexpected H update error: \{e}")
   }
@@ -334,7 +336,7 @@ test "wb cd: zero curvature coordinates are handled without division" {
   matmul_a_bt_into(h2, h2, hh)
   matmul_a_bt_into(v2, h2, vht)
   let grad2 = Array::make(2, 0.0)
-  match cd_update_w(hh, vht, w2, grad2) {
+  match cd_update_w(hh, vht, w2, grad2, no_reg) {
     Ok(_) => ()
     Err(e) => abort("unexpected W update error: \{e}")
   }
@@ -347,7 +349,7 @@ test "wb cd: zero curvature coordinates are handled without division" {
 ///|
 test "wb cd: tiny positive values stay finite" {
   let v = cd_mat(2, 2, [1.0e-100, 2.0e-100, 3.0e-100, 4.0e-100])
-  let fit = cd_unwrap_fit(cd_frobenius_fit(v, 1, 20, 1.0e-4, 5UL))
+  let fit = cd_unwrap_fit(cd_frobenius_fit(v, 1, 20, 1.0e-4, 5UL, no_reg))
   cd_assert_factor_ok(fit.w, 2, 1)
   cd_assert_factor_ok(fit.h, 1, 2)
   assert_true(fit.loss_value >= 0.0)
@@ -482,7 +484,7 @@ test "wb cd: transform fixes H, optimizes W with CD, and never mutates W" {
   }
   // Public dispatch must use the CD transform, not MU.
   let direct = cd_unwrap_matrix(
-    cd_frobenius_transform(x, h, 500, 1.0e-10, 42UL),
+    cd_frobenius_transform(x, h, 500, 1.0e-10, 42UL, no_reg),
   )
   for idx in 0..<w_new.data.length() {
     assert_eq(w_new.data[idx], direct.data[idx])
@@ -521,8 +523,8 @@ test "wb cd: MU and CD start from identical factors on the same seed" {
     Err(e) => abort("unexpected init error: \{e}")
   }
   let f0 = cd_objective(v, w0, h0)
-  let mu = cd_unwrap_mu(mu_frobenius_fit(v, 2, 200, 1.0e-8, seed))
-  let cd = cd_unwrap_fit(cd_frobenius_fit(v, 2, 200, 1.0e-8, seed))
+  let mu = cd_unwrap_mu(mu_frobenius_fit(v, 2, 200, 1.0e-8, seed, no_reg))
+  let cd = cd_unwrap_fit(cd_frobenius_fit(v, 2, 200, 1.0e-8, seed, no_reg))
   cd_assert_factor_ok(mu.w, 5, 2)
   cd_assert_factor_ok(mu.h, 2, 4)
   cd_assert_factor_ok(cd.w, 5, 2)

@@ -85,7 +85,7 @@ test "wb kl: hand-computed one iteration" {
   let v = klw_mat(2, 2, [1.0, 2.0, 2.0, 4.0])
   let w = klw_mat(2, 1, [1.0, 2.0])
   let h = klw_mat(1, 2, [1.0, 1.0])
-  let fit = klw_unwrap_fit(mu_kl_fit_from(v, w, h, 1, 0.0))
+  let fit = klw_unwrap_fit(mu_kl_fit_from(v, w, h, 1, 0.0, no_reg))
   assert_eq(fit.w.rows, 2)
   assert_eq(fit.w.cols, 1)
   assert_eq(fit.h.rows, 1)
@@ -118,7 +118,7 @@ test "wb kl: H/W updates and full iterations do not increase KL" {
   }
   let wtr = zeros_buf(2, 3)
   let colsum = Array::make(2, 0.0)
-  match kl_update_h_from_ratio(w, ratio, h, wtr, colsum) {
+  match kl_update_h_from_ratio(w, ratio, h, wtr, colsum, no_reg) {
     Ok(_) => ()
     Err(e) => abort("unexpected H update error: \{e}")
   }
@@ -131,7 +131,7 @@ test "wb kl: H/W updates and full iterations do not increase KL" {
   }
   let rht = zeros_buf(4, 2)
   let rowsum = Array::make(2, 0.0)
-  match kl_update_w_from_ratio(h, ratio, w, rht, rowsum) {
+  match kl_update_w_from_ratio(h, ratio, w, rht, rowsum, no_reg) {
     Ok(_) => ()
     Err(e) => abort("unexpected W update error: \{e}")
   }
@@ -145,7 +145,7 @@ test "wb kl: H/W updates and full iterations do not increase KL" {
       Ok(pair) => pair
       Err(e) => abort("unexpected init error: \{e}")
     }
-    let fit = klw_unwrap_fit(mu_kl_fit_from(v, w0, h0, budget, 0.0))
+    let fit = klw_unwrap_fit(mu_kl_fit_from(v, w0, h0, budget, 0.0, no_reg))
     assert_true(fit.loss_value <= prev + klw_tol(prev))
     prev = fit.loss_value
   }
@@ -154,7 +154,7 @@ test "wb kl: H/W updates and full iterations do not increase KL" {
 ///|
 test "wb kl: all-zero V yields zero KL and finite factors" {
   let z = zeros_buf(3, 4)
-  let fit = klw_unwrap_fit(mu_kl_fit(z, 2, 50, 1.0e-6, 42UL))
+  let fit = klw_unwrap_fit(mu_kl_fit(z, 2, 50, 1.0e-6, 42UL, no_reg))
   assert_eq(fit.loss_value, 0.0)
   assert_true(fit.converged)
   assert_true(fit.n_iter >= 1 && fit.n_iter <= 50)
@@ -172,7 +172,7 @@ test "wb kl: zero rows and columns train the remaining region" {
   let v = klw_mat(4, 3, [
     0.0, 0.0, 0.0, 1.0, 2.0, 0.0, 3.0, 4.0, 0.0, 5.0, 6.0, 0.0,
   ])
-  let fit = klw_unwrap_fit(mu_kl_fit(v, 2, 100, 1.0e-6, 7UL))
+  let fit = klw_unwrap_fit(mu_kl_fit(v, 2, 100, 1.0e-6, 7UL, no_reg))
   klw_factor_ok(fit.w, fit.h, 4, 2, 3)
   assert_true(fit.loss_value >= 0.0)
   assert_true(!fit.loss_value.is_nan() && !fit.loss_value.is_inf())
@@ -186,12 +186,12 @@ test "wb kl: zero rows and columns train the remaining region" {
 ///|
 test "wb kl: tiny and large valid data stay finite" {
   let tiny = klw_mat(2, 2, [1.0e-100, 2.0e-100, 3.0e-100, 4.0e-100])
-  let tfit = klw_unwrap_fit(mu_kl_fit(tiny, 1, 50, 1.0e-6, 5UL))
+  let tfit = klw_unwrap_fit(mu_kl_fit(tiny, 1, 50, 1.0e-6, 5UL, no_reg))
   klw_factor_ok(tfit.w, tfit.h, 2, 1, 2)
   assert_true(tfit.loss_value >= 0.0)
   assert_true(!tfit.loss_value.is_nan() && !tfit.loss_value.is_inf())
   let large = klw_mat(2, 2, [1.0e100, 2.0e100, 3.0e100, 4.0e100])
-  let lfit = klw_unwrap_fit(mu_kl_fit(large, 1, 50, 1.0e-6, 5UL))
+  let lfit = klw_unwrap_fit(mu_kl_fit(large, 1, 50, 1.0e-6, 5UL, no_reg))
   klw_factor_ok(lfit.w, lfit.h, 2, 1, 2)
   assert_true(lfit.loss_value >= 0.0)
   assert_true(!lfit.loss_value.is_nan() && !lfit.loss_value.is_inf())
@@ -222,7 +222,7 @@ test "wb kl: Random, NNDSVD, and NNDSVDa are supported without fallback" {
         }
     }
     let initial = klw_objective(v, w0, h0)
-    let direct = klw_unwrap_fit(mu_kl_fit_from(v, w0, h0, 200, 1.0e-6))
+    let direct = klw_unwrap_fit(mu_kl_fit_from(v, w0, h0, 200, 1.0e-6, no_reg))
     klw_factor_ok(direct.w, direct.h, 4, 2, 3)
     assert_true(direct.loss_value <= initial + klw_tol(initial))
     let model = NMF::new(
@@ -311,7 +311,9 @@ test "wb kl: full API contract and KL transform" {
   for idx in 0..<w_before.data.length() {
     assert_eq(w_before.data[idx], w_after.data[idx])
   }
-  let direct = klw_unwrap_matrix(mu_kl_transform(x, h, 200, 1.0e-6, 42UL))
+  let direct = klw_unwrap_matrix(
+    mu_kl_transform(x, h, 200, 1.0e-6, 42UL, no_reg),
+  )
   for idx in 0..<w_new.data.length() {
     assert_eq(w_new.data[idx], direct.data[idx])
   }
@@ -376,7 +378,9 @@ test "wb kl: V>0 with a zero reconstruction fails explicitly" {
   let v = klw_mat(1, 1, [1.0])
   let w = klw_mat(1, 1, [0.0])
   let h = klw_mat(1, 1, [0.0])
-  assert_true(mu_kl_fit_from(v, w, h, 10, 1.0e-6) is Err(NumericalError(_)))
+  assert_true(
+    mu_kl_fit_from(v, w, h, 10, 1.0e-6, no_reg) is Err(NumericalError(_)),
+  )
   // A KL model trained on all-zero data has H=0; transforming positive data
   // cannot be represented and must not silently return a fabricated result.
   let z = zeros_buf(3, 2)
@@ -452,7 +456,7 @@ test "wb kl: NNDSVD with structural zero support is supported" {
     Err(e) => abort("unexpected NNDSVD error: \{e}")
   }
   let initial = klw_objective(v, w0, h0)
-  let fit = klw_unwrap_fit(mu_kl_fit_from(v, w0, h0, 200, 1.0e-6))
+  let fit = klw_unwrap_fit(mu_kl_fit_from(v, w0, h0, 200, 1.0e-6, no_reg))
   klw_factor_ok(fit.w, fit.h, 3, 2, 3)
   assert_true(fit.loss_value <= initial + klw_tol(initial))
 }

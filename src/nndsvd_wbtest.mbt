@@ -356,7 +356,8 @@ test "wb nndsvd: fit consumes NNDSVD factors without Random fallback" {
   let v = nnd_test_rank2_fixture()
   let (w0_mu, h0_mu) = nnd_test_pair(nndsvd_init(v, 2))
   // MU path: NMF::fit must match a direct fit seeded with the NNDSVD factors.
-  let direct_mu = match mu_frobenius_fit_from(v, w0_mu, h0_mu, 50, 1.0e-6) {
+  let direct_mu = match
+    mu_frobenius_fit_from(v, w0_mu, h0_mu, 50, 1.0e-6, no_reg) {
     Ok(x) => x
     Err(e) => abort("unexpected MU error: \{e}")
   }
@@ -388,7 +389,8 @@ test "wb nndsvd: fit consumes NNDSVD factors without Random fallback" {
   // CD path: same check with a fresh NNDSVD pair (the MU call above mutates
   // the factor matrices in place).
   let (w0_cd, h0_cd) = nnd_test_pair(nndsvd_init(v, 2))
-  let direct_cd = match cd_frobenius_fit_from(v, w0_cd, h0_cd, 50, 1.0e-6) {
+  let direct_cd = match
+    cd_frobenius_fit_from(v, w0_cd, h0_cd, 50, 1.0e-6, no_reg) {
     Ok(x) => x
     Err(e) => abort("unexpected CD error: \{e}")
   }

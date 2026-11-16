@@ -2,8 +2,8 @@
 
 纯 MoonBit 实现的非负矩阵分解（NMF）库。`V ≈ W·H`，W、H 非负。
 
-> 状态：v0.1.0 开发中。**T01–T11 已完成**：MU-Frobenius、CD-Frobenius、NNDSVD/NNDSVDa 初始化与 MU-KL 可用，
-> 142 项测试在 wasm / wasm-gc / js / native 四后端全部通过。
+> 状态：v0.1.0 开发中。**T01–T12 已完成**：MU-Frobenius、CD-Frobenius、NNDSVD/NNDSVDa 初始化、MU-KL 与 L1/L2 正则可用，
+> 166 项测试在 wasm / wasm-gc / js / native 四后端全部通过。
 
 [![CI](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml/badge.svg)](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml)
 
@@ -25,10 +25,10 @@
 | 广义 KL 散度（Generalized KL，MU 求解器） | ✅ 已实现（T11） |
 | MU-KL 求解器（乘法更新，零值/零行列有明确策略） | ✅ 已实现（T11） |
 | MU-KL 的 transform（固定 H，KL 更新 W） | ✅ 已实现（T11） |
-| L1/L2 正则（进入优化目标） | 计划（T12） |
+| L1/L2 正则（进入目标函数、更新公式与收敛判断，三种求解组合均支持） | ✅ 已实现（T12） |
 | Hoyer 稀疏度指标 | 计划（T13） |
 
-选择不支持的 CD+KL 组合或非零正则时，`fit` 返回 `Err(InvalidConfig)`，不会静默切换求解器或损失。
+选择不支持的 CD+KL 组合，或传入负数 / NaN / Infinity 的正则参数时，`fit` 返回 `Err(InvalidConfig)`，不会静默切换求解器、损失，也不会把非法参数替换为 0。
 
 ### Solver × Loss 兼容矩阵
 
@@ -36,6 +36,8 @@
 |---|---|---|
 | MU | ✅ 已实现 | ✅ 已实现（T11） |
 | CD | ✅ 已实现 | ❌ `InvalidConfig` |
+
+L1/L2 正则对 MU+Frobenius、CD+Frobenius、MU+KL 三种组合均生效；CD+KL 仍为 `InvalidConfig`。
 
 纯 MoonBit、零第三方依赖（仅 core），wasm / wasm-gc / js / native 四后端均执行真实测试。
 
@@ -121,12 +123,14 @@ let config = @nmf.NMFConfig::new(
   max_iter=500,              // 默认 200；耗尽未达标时 converged=false
   tol=1.0e-6,                // 默认 1e-4；相邻目标相对变化 |ΔF|/max(1,|F|) < tol 即收敛
   seed=2026UL,               // 默认 42；同 seed 结果逐位一致
+  l1_reg=0.0,                // 默认 0；L1 强度，同时作用于 W、H，必须有限且 >= 0
+  l2_reg=0.0,                // 默认 0；L2 强度，同时作用于 W、H，必须有限且 >= 0
 )
 ```
 
 训练结果通过 `model.w()` / `model.h()`（防御性拷贝）、`model.n_iter()`、
-`model.loss_value()`（真实目标 ½‖V−WH‖²_F）、`model.converged()` 读取；
-`model.reconstruction_error(v)` 返回范数 ‖V−WH‖_F = sqrt(2·loss)。
+`model.loss_value()`（完整优化目标，含正则项）、`model.converged()` 读取；
+`model.reconstruction_error(v)` 始终返回范数 ‖V−WH‖_F（不含正则项；零正则时等于 sqrt(2·loss)）。
 未训练的模型调用以上接口一律返回 `Err(NotFitted)`；fit 失败会回到未训练状态。
 `model.transform(x)` 固定 H 对新数据解 W；`model.inverse_transform(w)` 计算 W·H。
 `solver=@nmf.Solver::CD` 时 fit 与 transform 都使用 CD 坐标下降，不会回退到 MU。
@@ -183,11 +187,53 @@ let config = @nmf.NMFConfig::new(
 NNDSVD/NNDSVDa 可用于 MU-KL，但公共初始化结果不被修改，也不静默替换 Init；
 如果初始 WH 在 V>0 处为零，MU-KL 明确返回 `NumericalError`。
 
+### L1/L2 正则化
+
+正则项同时作用于 W 和 H：
+
+```text
+Ω(W,H) = l1_reg·(ΣW + ΣH) + (l2_reg/2)·(‖W‖²_F + ‖H‖²_F)
+
+J_F (W,H)  = ½‖V − WH‖²_F + Ω(W,H)
+J_KL(W,H)  = D_KL(V‖WH)  + Ω(W,H)
+```
+
+因为 W、H 非负，`ΣW = ‖W‖₁`、`ΣH = ‖H‖₁`，第一项就是两个因子的 L1 范数之和。
+正则**以梯度形式进入更新公式**，不是训练结束后对因子做截断或缩放：
+
+| 求解器 | H 更新（W 更新对称） |
+|---|---|
+| MU-Frobenius | `H ← H ⊙ (WᵀV) ⊘ (WᵀWH + l1_reg + l2_reg·H)` |
+| CD-Frobenius | 曲率 `G_pp + l2_reg`，梯度 `(G·H)_p − C_pj + l1_reg + l2_reg·H_p`，`H_p ← max(0, H_p − g/曲率)` |
+| MU-KL | `H ← H ⊙ (Wᵀ(V⊘WH)) ⊘ (colsum(W) + l1_reg + l2_reg·H)` |
+
+语义约定：
+
+- `model.loss_value()` 返回**完整目标** `J_F` 或 `J_KL`（含正则项），收敛判断也用同一个量；
+- `model.reconstruction_error(v)` 始终是 `‖V − WH‖_F`，**不含**正则项；
+- `model.transform(x)` 固定训练得到的 H，只对正在求解的 W 施加正则（H 的惩罚项对 W 是常数，
+  不改变 W 的更新，但计入收敛判断监视的完整目标）；
+- `l1_reg = l2_reg = 0`（默认）逐位复现 T11 之前的算法与结果：加入的 `0.0` / `0.0·x`
+  项在 IEEE-754 下精确，不改变任何数值；
+- 负数、NaN、±Infinity 一律 `InvalidConfig`，不会被静默替换为 0。
+
+```moonbit
+let config = @nmf.NMFConfig::new(
+  n_components=2,
+  l1_reg=0.1,   // L1：推动因子稀疏
+  l2_reg=0.2,   // L2：抑制因子幅度
+  seed=42UL,
+)
+```
+
+CD+KL 组合不受影响，仍然返回 `InvalidConfig`；三个有效组合（MU+Frobenius、
+CD+Frobenius、MU+KL）均支持任意 `l1_reg` / `l2_reg` 组合。
+
 ## 运行测试
 
 ```sh
 moon check --deny-warn   # 类型与警告检查
-moon test                # 全部 142 项测试（默认 wasm 后端）
+moon test                # 全部 166 项测试（默认 wasm 后端）
 moon test --target js    # JS 后端（真实执行全部测试）
 moon test --target wasm-gc
 moon test --target native
@@ -198,9 +244,10 @@ moon fmt --check         # 格式检查
 广义 KL 损失（手算/零值/非负性/溢出）→ MU 求解器（Frobenius + KL；KL 单轮更新、目标不增、
 零行列、初始化兼容）→ CD 求解器（精确坐标步、目标不增、零曲率/零行列/极小值边界）→
 内部 SVD（幂迭代/deflation/秩不足/重复奇异值/极小值）→ NNDSVD/NNDSVDa（正负部选对、
-零退化、非负、确定性、零元素均值填充、全零保持）→ NMF API → 端到端验收（普通矩阵、
-已知低秩、全零、非法输入、seed 复现、未收敛状态）+ 200 组随机属性扫描。CD、NNDSVD、
-NNDSVDa、KL 与 MU-KL 均有独立白盒测试；KL 的 H/W 更新与目标单调性单独验证。
+零退化、非负、确定性、零元素均值填充、全零保持）→ L1/L2 正则（手算目标值、三求解器
+单轮更新对照独立参考实现、完整目标单调性、强 L1 收缩、transform 只正则 W、零正则逐位兼容、
+参数合法性）→ NMF API → 端到端验收（普通矩阵、已知低秩、全零、非法输入、seed 复现、
+未收敛状态）+ 200 组随机属性扫描。CD、NNDSVD、NNDSVDa、KL、MU-KL 与正则均有独立白盒测试。
 
 CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 check、完整测试套件、
 三后端 check+test（后者的 matrix 展开为 native / js / wasm-gc 三个运行实例，共 5 个 Job 实例）。

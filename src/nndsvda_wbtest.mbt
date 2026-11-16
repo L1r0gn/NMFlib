@@ -193,12 +193,14 @@ test "wb nndsvda: MU and CD train from NNDSVDa without fallback" {
     let (w_direct, h_direct) = nndsda_pair(nndsvda_init(v, 2))
     let (direct_w, direct_h) = match solver {
       MU =>
-        match mu_frobenius_fit_from(v, w_direct, h_direct, 200, 1.0e-6) {
+        match
+          mu_frobenius_fit_from(v, w_direct, h_direct, 200, 1.0e-6, no_reg) {
           Ok(x) => (x.w, x.h)
           Err(e) => abort("unexpected MU error: \{e}")
         }
       CD =>
-        match cd_frobenius_fit_from(v, w_direct, h_direct, 200, 1.0e-6) {
+        match
+          cd_frobenius_fit_from(v, w_direct, h_direct, 200, 1.0e-6, no_reg) {
           Ok(x) => (x.w, x.h)
           Err(e) => abort("unexpected CD error: \{e}")
         }

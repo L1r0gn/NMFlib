@@ -1,4 +1,132 @@
 ///|
+/// L1/L2 regularization strengths applied to **both** factors.
+///
+/// The penalty is
+/// ```text
+/// Ω(W,H) = l1·(ΣW + ΣH) + (l2/2)·(‖W‖²_F + ‖H‖²_F)
+/// ```
+/// Since W and H are non-negative, `ΣW = ‖W‖₁` and `ΣH = ‖H‖₁`, so the first
+/// term is exactly the L1 penalty on both factors. Both strengths are
+/// validated at the API boundary (`l1/l2 >= 0`, finite) and are never
+/// repaired silently here.
+priv struct Reg {
+  l1 : Double
+  l2 : Double
+}
+
+///|
+/// Zero regularization. Every regularized expression in this file returns the
+/// exact pre-T12 value when `reg == no_reg`: adding `0.0` and
+/// `0.0 * non_negative` is exact in IEEE-754, so the original update path and
+/// its bit-for-bit results are preserved without a separate branch.
+#warnings("-unused_value")
+let no_reg : Reg = { l1: 0.0, l2: 0.0, }
+
+///|
+/// Regularization penalty `Ω(W,H)` for non-negative factors.
+///
+/// Returns `Ok(0.0)` immediately for `no_reg`, so a zero-regularization run
+/// performs no extra arithmetic and cannot fail on new error paths. Negative
+/// or non-finite factor entries and non-finite intermediate sums are reported
+/// as `NumericalError`; the penalty is never silently clamped.
+fn reg_penalty(w : Matrix, h : Matrix, reg : Reg) -> Result[Double, NMFError] {
+  if reg.l1 == 0.0 && reg.l2 == 0.0 {
+    return Ok(0.0)
+  }
+  let mut l1_sum = 0.0
+  let mut l2_sum = 0.0
+  for idx in 0..<w.data.length() {
+    let x = w.data[idx]
+    if x.is_nan() || x.is_inf() || x < 0.0 {
+      return Err(
+        NumericalError("regularization penalty: invalid W entry at \{idx}"),
+      )
+    }
+    l1_sum = l1_sum + x
+    l2_sum = l2_sum + x * x
+    if l1_sum.is_nan() || l1_sum.is_inf() || l2_sum.is_nan() || l2_sum.is_inf() {
+      return Err(NumericalError("regularization penalty: W sum overflowed"))
+    }
+  }
+  for idx in 0..<h.data.length() {
+    let x = h.data[idx]
+    if x.is_nan() || x.is_inf() || x < 0.0 {
+      return Err(
+        NumericalError("regularization penalty: invalid H entry at \{idx}"),
+      )
+    }
+    l1_sum = l1_sum + x
+    l2_sum = l2_sum + x * x
+    if l1_sum.is_nan() || l1_sum.is_inf() || l2_sum.is_nan() || l2_sum.is_inf() {
+      return Err(NumericalError("regularization penalty: H sum overflowed"))
+    }
+  }
+  let penalty = reg.l1 * l1_sum + 0.5 * reg.l2 * l2_sum
+  if penalty.is_nan() || penalty.is_inf() {
+    return Err(
+      NumericalError("regularization penalty overflowed to a non-finite value"),
+    )
+  }
+  Ok(penalty)
+}
+
+///|
+/// Regularized Frobenius objective from a precomputed product `WH`:
+/// `½‖V − WH‖²_F + Ω(W,H)`.
+///
+/// This is the quantity that `loss_value` reports and that the convergence
+/// test compares for Frobenius training; it is **not** the reconstruction
+/// norm returned by `NMF::reconstruction_error`.
+fn frobenius_reg_from_wh(
+  v : Matrix,
+  wh : Matrix,
+  w : Matrix,
+  h : Matrix,
+  reg : Reg,
+) -> Result[Double, NMFError] {
+  let mut f = 0.5 * sq_diff_from_wh(v, wh)
+  match reg_penalty(w, h, reg) {
+    Ok(p) => f = f + p
+    Err(e) => return Err(e)
+  }
+  if f.is_nan() || f.is_inf() {
+    return Err(
+      NumericalError("regularized Frobenius objective became non-finite"),
+    )
+  }
+  Ok(f)
+}
+
+///|
+/// Regularized generalized-KL objective from a precomputed product `WH`:
+/// `D_KL(V‖WH) + Ω(W,H)`.
+///
+/// The KL term itself is unchanged from T11 (including its zero conventions);
+/// the regularization penalty is added on top and never merged into the
+/// divergence.
+fn kl_reg_from_wh(
+  v : Matrix,
+  wh : Matrix,
+  w : Matrix,
+  h : Matrix,
+  reg : Reg,
+) -> Result[Double, NMFError] {
+  let base = match kl_divergence(v, wh) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  let penalty = match reg_penalty(w, h, reg) {
+    Ok(p) => p
+    Err(e) => return Err(e)
+  }
+  let f = base + penalty
+  if f.is_nan() || f.is_inf() {
+    return Err(NumericalError("regularized KL objective became non-finite"))
+  }
+  Ok(f)
+}
+
+///|
 /// Unchecked `Σ (V − WH)²` from a precomputed product `WH`.
 /// Caller guarantees `wh` has the same shape as `v`.
 fn sq_diff_from_wh(v : Matrix, wh : Matrix) -> Double {

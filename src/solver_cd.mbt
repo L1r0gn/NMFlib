@@ -10,30 +10,38 @@ priv struct CdFit {
 
 ///|
 /// One full cyclic sweep over H with W fixed, minimizing
-/// `F = ½‖V − W·H‖²_F` one coordinate at a time.
+/// `F = ½‖V − W·H‖²_F + l1·ΣH + (l2/2)‖H‖²_F` one coordinate at a time.
 ///
 /// `gram = WᵀW` (k×k) and `cross = WᵀV` (k×d) must be precomputed for the
 /// current W; `grad` is a k-entry scratch buffer whose contents are rebuilt
 /// for every column and maintained incrementally as coordinates change.
 /// Columns are visited left to right and coordinates top to bottom, giving a
-/// deterministic order. Each accepted step updates the cached gradient with
-/// `grad[i] += gram[i,p] * delta`, so the cache stays equal to
-/// `gram·h_j − cross[:,j]` throughout the column sweep.
+/// deterministic order. Each accepted step updates the cached **data**
+/// gradient with `grad[i] += gram[i,p] * delta`, so the cache stays equal to
+/// `gram·h_j − cross[:,j]` throughout the column sweep. The regularization
+/// derivative `l1 + l2·h_p` is added per coordinate from the current value
+/// (there is no cross-coordinate coupling), so the total gradient is exact.
 ///
-/// Curvature `gram[p,p]` is `‖W[:,p]‖²`, hence non-negative. When it is
-/// strictly positive the exact line minimizer
-/// `max(0, h[p,j] − grad[p]/curvature)` is used with no epsilon floor: adding
-/// an epsilon would change the objective. When it is zero, the coordinate
-/// does not affect `WH`; the subproblem is constant if the gradient is also
-/// zero (we canonicalize the factor to 0), and has no finite minimum
-/// otherwise (reported as `NumericalError` rather than silently ignored).
-/// Non-finite gradients, steps, or factors are always reported as
-/// `NumericalError`; tiny negative values from rounding are clamped to 0.
+/// Regularized coordinate subproblem: curvature `gram[p,p] + l2`, gradient
+/// `gram·h_j − cross[:,j] + l1 + l2·h_p`, exact non-negative minimizer
+/// `max(0, h_p − g / curvature)`. This is the closed-form minimizer of the
+/// regularized quadratic, not a post-hoc shrink.
+///
+/// Curvature `gram[p,p] + l2` is non-negative. When it is strictly positive
+/// the exact line minimizer is used with no epsilon floor: adding an epsilon
+/// would change the objective. When it is zero (`l2 = 0` and `W[:,p]` is
+/// numerically zero), the coordinate does not affect `WH`; the subproblem is
+/// `(g_data + l1)·h_p` on `h_p >= 0`, so a negative slope has no finite
+/// minimum (`NumericalError`) and any non-negative slope is minimized at 0
+/// (canonicalized). Non-finite gradients, steps, or factors are always
+/// reported as `NumericalError`; tiny negative values from rounding are
+/// clamped to 0.
 fn cd_update_h(
   gram : Matrix,
   cross : Matrix,
   h : Matrix,
   grad : Array[Double],
+  reg : Reg,
 ) -> Result[Unit, NMFError] {
   let k = gram.rows
   let d = h.cols
@@ -47,7 +55,7 @@ fn cd_update_h(
       grad[p] = s - cross.data[p * d + j]
     }
     for p in 0..<k {
-      let curvature = gram.data[p * k + p]
+      let curvature = gram.data[p * k + p] + reg.l2
       if curvature.is_nan() || curvature.is_inf() || curvature < 0.0 {
         return Err(
           NumericalError(
@@ -56,8 +64,8 @@ fn cd_update_h(
         )
       }
       let old = h.data[p * d + j]
+      let g = grad[p] + reg.l1 + reg.l2 * old
       if curvature > 0.0 {
-        let g = grad[p]
         if g.is_nan() || g.is_inf() {
           return Err(
             NumericalError(
@@ -82,15 +90,14 @@ fn cd_update_h(
           }
         }
       } else {
-        // Zero curvature: W[:,p] is numerically zero, so this coordinate has
-        // no effect on WH. A nonzero gradient would mean the quadratic is
-        // linear (unbounded below), which cannot be minimized by a coordinate
-        // step; report it instead of silently ignoring the objective.
-        let g = grad[p]
-        if g.is_nan() || g.is_inf() || g != 0.0 {
+        // Zero curvature: W[:,p] is numerically zero and l2 = 0, so this
+        // coordinate has no effect on WH and the subproblem is linear in
+        // (g_data + l1). A negative slope is unbounded below; a non-negative
+        // slope is minimized at 0, which we canonicalize.
+        if g.is_nan() || g.is_inf() || g < 0.0 {
           return Err(
             NumericalError(
-              "CD H update: zero curvature with nonzero gradient at coordinate \{p}, column \{j}",
+              "CD H update: zero curvature with negative slope at coordinate \{p}, column \{j}",
             ),
           )
         }
@@ -113,12 +120,15 @@ fn cd_update_h(
 /// One full cyclic sweep over W with H fixed. This is the exact mirror of
 /// `cd_update_h`: `gram = HHᵀ` (k×k), `cross = VHᵀ` (n×k), rows of W are
 /// independent, and coordinates within a row are visited left to right.
-/// The same zero-curvature, non-finite, and non-negativity rules apply.
+/// Curvature is `gram[p,p] + l2` and the coordinate gradient is
+/// `gram·w_i − cross[i,:] + l1 + l2·w_p`; the same zero-curvature,
+/// non-finite, and non-negativity rules apply.
 fn cd_update_w(
   gram : Matrix,
   cross : Matrix,
   w : Matrix,
   grad : Array[Double],
+  reg : Reg,
 ) -> Result[Unit, NMFError] {
   let n = w.rows
   let k = gram.rows
@@ -132,7 +142,7 @@ fn cd_update_w(
       grad[p] = s - cross.data[i * k + p]
     }
     for p in 0..<k {
-      let curvature = gram.data[p * k + p]
+      let curvature = gram.data[p * k + p] + reg.l2
       if curvature.is_nan() || curvature.is_inf() || curvature < 0.0 {
         return Err(
           NumericalError(
@@ -141,8 +151,8 @@ fn cd_update_w(
         )
       }
       let old = w.data[i * k + p]
+      let g = grad[p] + reg.l1 + reg.l2 * old
       if curvature > 0.0 {
-        let g = grad[p]
         if g.is_nan() || g.is_inf() {
           return Err(
             NumericalError(
@@ -167,11 +177,10 @@ fn cd_update_w(
           }
         }
       } else {
-        let g = grad[p]
-        if g.is_nan() || g.is_inf() || g != 0.0 {
+        if g.is_nan() || g.is_inf() || g < 0.0 {
           return Err(
             NumericalError(
-              "CD W update: zero curvature with nonzero gradient at coordinate \{p}, row \{i}",
+              "CD W update: zero curvature with negative slope at coordinate \{p}, row \{i}",
             ),
           )
         }
@@ -192,32 +201,37 @@ fn cd_update_w(
 
 ///|
 /// CD-Frobenius fit (cyclic coordinate descent for
-/// `F = ½‖V − WH‖²_F`).
+/// `F = ½‖V − WH‖²_F + l1·(ΣW+ΣH) + (l2/2)(‖W‖²+‖H‖²)`; `no_reg` gives the
+/// pre-T12 objective).
 ///
 /// Each outer iteration performs a complete H sweep with W fixed, then a
 /// complete W sweep with the updated H fixed, then recomputes the true
-/// objective and applies the same relative-change convergence rule as MU.
+/// regularized objective and applies the same relative-change convergence
+/// rule as MU. Every coordinate step is the exact minimizer of the
+/// regularized one-dimensional subproblem, so the full objective is
+/// non-increasing.
 /// Gram and cross-product buffers are allocated once and refreshed per
 /// iteration (WᵀW, WᵀV, HHᵀ, VHᵀ); the gradient scratch buffer is reused for
 /// every column/row. No matrix copies or fresh allocations occur inside the
 /// coordinate loops.
 ///
 /// Numerical policy: only exactly-zero curvature is special-cased; positive
-/// curvature uses the exact line minimizer without an epsilon floor, and a
-/// non-finite result is a hard `NumericalError`. Exhausting `max_iter`
-/// without meeting `tol` leaves `converged = false`.
+/// curvature (including `l2 > 0`) uses the exact line minimizer without an
+/// epsilon floor, and a non-finite result is a hard `NumericalError`.
+/// Exhausting `max_iter` without meeting `tol` leaves `converged = false`.
 fn cd_frobenius_fit(
   v : Matrix,
   k : Int32,
   max_iter : Int32,
   tol : Double,
   seed : UInt64,
+  reg : Reg,
 ) -> Result[CdFit, NMFError] {
   let (w, h) = match random_init(v, k, seed) {
     Ok(pair) => pair
     Err(e) => return Err(e)
   }
-  cd_frobenius_fit_from(v, w, h, max_iter, tol)
+  cd_frobenius_fit_from(v, w, h, max_iter, tol, reg)
 }
 
 ///|
@@ -230,6 +244,7 @@ fn cd_frobenius_fit_from(
   h : Matrix,
   max_iter : Int32,
   tol : Double,
+  reg : Reg,
 ) -> Result[CdFit, NMFError] {
   let n = v.rows
   let d = v.cols
@@ -241,7 +256,8 @@ fn cd_frobenius_fit_from(
   let vht = zeros_buf(n, k) // VHᵀ
   let grad = Array::make(k, 0.0)
   let wh = zeros_buf(n, d) // WH for the true objective
-  let mut prev = match frobenius_objective(v, w, h) {
+  matmul_into(w, h, wh)
+  let mut prev = match frobenius_reg_from_wh(v, wh, w, h, reg) {
     Ok(f) => f
     Err(e) => return Err(e)
   }
@@ -258,7 +274,7 @@ fn cd_frobenius_fit_from(
         NumericalError("CD: non-finite Gram or cross product for H update"),
       )
     }
-    match cd_update_h(wtw, wv, h, grad) {
+    match cd_update_h(wtw, wv, h, grad, reg) {
       Ok(_) => ()
       Err(e) => return Err(e)
     }
@@ -270,17 +286,15 @@ fn cd_frobenius_fit_from(
         NumericalError("CD: non-finite Gram or cross product for W update"),
       )
     }
-    match cd_update_w(hh, vht, w, grad) {
+    match cd_update_w(hh, vht, w, grad, reg) {
       Ok(_) => ()
       Err(e) => return Err(e)
     }
-    // True objective from the freshly updated factors.
+    // True regularized objective from the freshly updated factors.
     matmul_into(w, h, wh)
-    let f = 0.5 * sq_diff_from_wh(v, wh)
-    if f.is_nan() || f.is_inf() {
-      return Err(
-        NumericalError("objective became non-finite during CD updates"),
-      )
+    let f = match frobenius_reg_from_wh(v, wh, w, h, reg) {
+      Ok(x) => x
+      Err(e) => return Err(e)
     }
     loss = f
     if rel_change(f, prev) < tol {
@@ -295,15 +309,19 @@ fn cd_frobenius_fit_from(
 ///|
 /// CD-Frobenius with H fixed: solves `X ≈ W·H` for W only (used by
 /// `NMF::transform`). `HHᵀ` and `XHᵀ` are constant across iterations and are
-/// precomputed once; each iteration performs a full cyclic W sweep followed
-/// by the same relative-objective convergence test. The training W is never
-/// modified, and this path never falls back to MU.
+/// precomputed once; each iteration performs a full cyclic W sweep with the
+/// regularized coordinate update (`curvature = HHᵀ[p,p] + l2`,
+/// `gradient = HHᵀ·w_i − XHᵀ[i,:] + l1 + l2·w_p`) followed by the same
+/// relative-objective convergence test. H's penalty is constant here, so it
+/// never changes the W step but is included in the monitored objective. The
+/// training W is never modified, and this path never falls back to MU.
 fn cd_frobenius_transform(
   x : Matrix,
   h : Matrix,
   max_iter : Int32,
   tol : Double,
   seed : UInt64,
+  reg : Reg,
 ) -> Result[Matrix, NMFError] {
   let m = x.rows
   let k = h.rows
@@ -322,20 +340,19 @@ fn cd_frobenius_transform(
   let grad = Array::make(k, 0.0)
   let wh = zeros_buf(m, d)
   matmul_into(w, h, wh)
-  let s0 = sq_diff_from_wh(x, wh)
-  if s0.is_nan() || s0.is_inf() {
-    return Err(NumericalError("initial transform objective overflowed"))
+  let mut prev = match frobenius_reg_from_wh(x, wh, w, h, reg) {
+    Ok(f) => f
+    Err(e) => return Err(e)
   }
-  let mut prev = 0.5 * s0
   for _ in 1..<=max_iter {
-    match cd_update_w(hh, vht, w, grad) {
+    match cd_update_w(hh, vht, w, grad, reg) {
       Ok(_) => ()
       Err(e) => return Err(e)
     }
     matmul_into(w, h, wh)
-    let f = 0.5 * sq_diff_from_wh(x, wh)
-    if f.is_nan() || f.is_inf() {
-      return Err(NumericalError("transform objective became non-finite"))
+    let f = match frobenius_reg_from_wh(x, wh, w, h, reg) {
+      Ok(x) => x
+      Err(e) => return Err(e)
     }
     if rel_change(f, prev) < tol {
       break

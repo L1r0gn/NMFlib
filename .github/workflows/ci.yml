@@ -38,7 +38,8 @@ jobs:
       - name: Install MoonBit (official installer, version-asserted)
         run: bash scripts/ci-install-moonbit.sh
       # Default target is wasm (moon.mod preferred_target). Runs the whole
-      # suite: Matrix, error, Random, Frobenius loss, MU, NMF API, end-to-end.
+      # suite: Matrix, error, Random, Frobenius/KL loss, MU, CD, NNDSVD,
+      # L1/L2 regularization, NMF API, end-to-end.
       - name: Run full test suite
         run: moon test
 
@@ -48,8 +49,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # All three targets run the real 74-test suite (verified locally on
-        # moon 0.1.20261028 and 0.1.20261104; not compile-only checks).
+        # All three targets run the real full test suite, not compile-only
+        # checks. The count is deliberately not hardcoded here (it goes stale
+        # with every task); `moon test` prints the authoritative total.
         target: [native, js, wasm-gc]
     steps:
       - uses: actions/checkout@v5

@@ -30,30 +30,37 @@ fn rel_change(f : Double, prev : Double) -> Double {
 }
 
 ///|
-/// MU-Frobenius fit (Lee & Seung 2001), minimizing `F = ½‖V − WH‖²_F`.
+/// MU-Frobenius fit (Lee & Seung 2001), minimizing
+/// `F = ½‖V − WH‖²_F + Ω(W,H)` (Ω is zero for `no_reg`).
 ///
 /// Per outer iteration, H is updated first, then W:
 /// ```text
-/// H ← H ⊙ (WᵀV) ⊘ max((WᵀW)H, ε)
-/// W ← W ⊙ (VHᵀ) ⊘ max(W(HHᵀ), ε)
+/// H ← H ⊙ (WᵀV) ⊘ max((WᵀW)H + l1 + l2·H, ε)
+/// W ← W ⊙ (VHᵀ) ⊘ max(W(HHᵀ) + l1 + l2·W, ε)
 /// ```
+/// The `l1` term is the derivative of `l1·ΣH`, the `l2·H` term the derivative
+/// of `(l2/2)‖H‖²_F`; both enter the denominator exactly as the auxiliary
+/// (majorize–minimize) function prescribes, so each step never increases the
+/// regularized objective. With `no_reg` the denominators are bit-for-bit the
+/// pre-T12 values.
 /// Gram matrices WᵀW and HHᵀ are reused so each iteration costs
 /// O(ndk + nk² + dk²) instead of recomputing full triple products.
-/// The true objective is recomputed from a fresh WH every iteration and
-/// drives the convergence test; exhausting max_iter without meeting tol
-/// leaves `converged = false`.
+/// The true regularized objective is recomputed from a fresh WH every
+/// iteration and drives the convergence test; exhausting max_iter without
+/// meeting tol leaves `converged = false`.
 fn mu_frobenius_fit(
   v : Matrix,
   k : Int32,
   max_iter : Int32,
   tol : Double,
   seed : UInt64,
+  reg : Reg,
 ) -> Result[MuFit, NMFError] {
   let (w, h) = match random_init(v, k, seed) {
     Ok(pair) => pair
     Err(e) => return Err(e)
   }
-  mu_frobenius_fit_from(v, w, h, max_iter, tol)
+  mu_frobenius_fit_from(v, w, h, max_iter, tol, reg)
 }
 
 ///|
@@ -67,6 +74,7 @@ fn mu_frobenius_fit_from(
   h : Matrix,
   max_iter : Int32,
   tol : Double,
+  reg : Reg,
 ) -> Result[MuFit, NMFError] {
   let n = v.rows
   let d = v.cols
@@ -79,7 +87,8 @@ fn mu_frobenius_fit_from(
   let hh = zeros_buf(k, k) // HHᵀ
   let whht = zeros_buf(n, k) // W(HHᵀ)
   let wh = zeros_buf(n, d) // WH for the objective
-  let mut prev = match frobenius_objective(v, w, h) {
+  matmul_into(w, h, wh)
+  let mut prev = match frobenius_reg_from_wh(v, wh, w, h, reg) {
     Ok(f) => f
     Err(e) => return Err(e)
   }
@@ -93,7 +102,7 @@ fn mu_frobenius_fit_from(
     matmul_at_b_into(w, w, ww)
     matmul_into(ww, h, wwh)
     for idx in 0..<h.data.length() {
-      let den = wwh.data[idx]
+      let den = wwh.data[idx] + reg.l1 + reg.l2 * h.data[idx]
       let floored = if den > mu_eps { den } else { mu_eps }
       h.data[idx] = h.data[idx] * wv.data[idx] / floored
     }
@@ -105,20 +114,18 @@ fn mu_frobenius_fit_from(
     matmul_a_bt_into(h, h, hh)
     matmul_into(w, hh, whht)
     for idx in 0..<w.data.length() {
-      let den = whht.data[idx]
+      let den = whht.data[idx] + reg.l1 + reg.l2 * w.data[idx]
       let floored = if den > mu_eps { den } else { mu_eps }
       w.data[idx] = w.data[idx] * vht.data[idx] / floored
     }
     if !all_finite(w.data) {
       return Err(NumericalError("W became non-finite during MU updates"))
     }
-    // True objective from the freshly updated factors.
+    // True regularized objective from the freshly updated factors.
     matmul_into(w, h, wh)
-    let f = 0.5 * sq_diff_from_wh(v, wh)
-    if f.is_nan() || f.is_inf() {
-      return Err(
-        NumericalError("objective became non-finite during MU updates"),
-      )
+    let f = match frobenius_reg_from_wh(v, wh, w, h, reg) {
+      Ok(x) => x
+      Err(e) => return Err(e)
     }
     loss = f
     if rel_change(f, prev) < tol {
@@ -134,12 +141,19 @@ fn mu_frobenius_fit_from(
 /// MU-Frobenius with H fixed: solves `X ≈ W·H` for W only (used by
 /// `NMF::transform`). XHᵀ and HHᵀ are constant across iterations and
 /// precomputed once.
+///
+/// Regularization applies to the W being optimized only. H is fixed, so its
+/// penalty `l1·ΣH + (l2/2)‖H‖²_F` is a constant of the subproblem: it does
+/// not change the W update (`W ⊘ (WHHᵀ + l1 + l2·W)`) but is included in the
+/// reported convergence objective so that the monitored quantity is the full
+/// `J_F(X, W, H)` from the shared definition.
 fn mu_frobenius_transform(
   x : Matrix,
   h : Matrix,
   max_iter : Int32,
   tol : Double,
   seed : UInt64,
+  reg : Reg,
 ) -> Result[Matrix, NMFError] {
   let m = x.rows
   let k = h.rows
@@ -155,15 +169,14 @@ fn mu_frobenius_transform(
   let whht = zeros_buf(m, k)
   let wh = zeros_buf(m, d)
   matmul_into(w, h, wh)
-  let s0 = sq_diff_from_wh(x, wh)
-  if s0.is_nan() || s0.is_inf() {
-    return Err(NumericalError("initial transform objective overflowed"))
+  let mut prev = match frobenius_reg_from_wh(x, wh, w, h, reg) {
+    Ok(f) => f
+    Err(e) => return Err(e)
   }
-  let mut prev = 0.5 * s0
   for _ in 1..<=max_iter {
     matmul_into(w, hh, whht)
     for idx in 0..<w.data.length() {
-      let den = whht.data[idx]
+      let den = whht.data[idx] + reg.l1 + reg.l2 * w.data[idx]
       let floored = if den > mu_eps { den } else { mu_eps }
       w.data[idx] = w.data[idx] * vht.data[idx] / floored
     }
@@ -171,9 +184,9 @@ fn mu_frobenius_transform(
       return Err(NumericalError("W became non-finite during transform updates"))
     }
     matmul_into(w, h, wh)
-    let f = 0.5 * sq_diff_from_wh(x, wh)
-    if f.is_nan() || f.is_inf() {
-      return Err(NumericalError("transform objective became non-finite"))
+    let f = match frobenius_reg_from_wh(x, wh, w, h, reg) {
+      Ok(x) => x
+      Err(e) => return Err(e)
     }
     if rel_change(f, prev) < tol {
       break
@@ -226,18 +239,25 @@ fn kl_ratio_into(
 
 ///|
 /// MU-KL H update from a precomputed ratio matrix:
-/// `H ← H ⊙ (WᵀR) ⊘ colsum(W)`.
+/// `H ← H ⊙ (WᵀR) ⊘ (colsum(W) + l1 + l2·H)`.
 ///
-/// A zero denominator means the corresponding W column is all zero; that H
-/// row has no influence on WH, so it is canonicalized to zero instead of
-/// dividing by zero. The same rule is used in the W update. No epsilon floor
-/// is used; positive denominators are used exactly.
+/// The `l1`/`l2·H` terms are the derivatives of `l1·ΣH` and `(l2/2)‖H‖²_F`;
+/// they enter the denominator as the auxiliary-function (MM) update requires.
+/// With `no_reg` the denominator is exactly `colsum(W)`.
+///
+/// A zero denominator means the corresponding W column is all zero *and*
+/// both regularization strengths are zero (or `l2·H` is exactly zero): that H
+/// entry has no influence on WH and no penalty gradient, so it is
+/// canonicalized to zero instead of dividing by zero. The same rule is used in
+/// the W update. No epsilon floor is used; positive denominators are used
+/// exactly.
 fn kl_update_h_from_ratio(
   w : Matrix,
   ratio : Matrix,
   h : Matrix,
   numerator : Matrix,
   colsum : Array[Double],
+  reg : Reg,
 ) -> Result[Unit, NMFError] {
   let k = w.cols
   let d = h.cols
@@ -256,26 +276,26 @@ fn kl_update_h_from_ratio(
     colsum[p] = s
   }
   for p in 0..<k {
-    let den = colsum[p]
-    if den == 0.0 {
-      for j in 0..<d {
-        h.data[p * d + j] = 0.0
-      }
-    } else {
-      for j in 0..<d {
-        let num = numerator.data[p * d + j]
+    for j in 0..<d {
+      let idx = p * d + j
+      let old = h.data[idx]
+      let den = colsum[p] + reg.l1 + reg.l2 * old
+      if den == 0.0 {
+        h.data[idx] = 0.0
+      } else {
+        let num = numerator.data[idx]
         if num.is_nan() || num.is_inf() || num < 0.0 {
           return Err(
             NumericalError("KL H update: invalid numerator at component \{p}"),
           )
         }
-        let next = h.data[p * d + j] * num / den
+        let next = old * num / den
         if next.is_nan() || next.is_inf() {
           return Err(
             NumericalError("KL H update: non-finite update at component \{p}"),
           )
         }
-        h.data[p * d + j] = next
+        h.data[idx] = next
       }
     }
   }
@@ -292,14 +312,17 @@ fn kl_update_h_from_ratio(
 
 ///|
 /// MU-KL W update from a precomputed ratio matrix:
-/// `W ← W ⊙ (R Hᵀ) ⊘ rowsum(H)`. A zero H row makes that W column
-/// irrelevant to WH and is canonicalized to zero; no epsilon is used.
+/// `W ← W ⊙ (R Hᵀ) ⊘ (rowsum(H) + l1 + l2·W)`. A zero denominator means the
+/// corresponding H row and the regularization gradient are both zero; that W
+/// entry is irrelevant to WH and is canonicalized to zero. No epsilon is
+/// used, and `no_reg` reproduces the T11 denominator exactly.
 fn kl_update_w_from_ratio(
   h : Matrix,
   ratio : Matrix,
   w : Matrix,
   numerator : Matrix,
   rowsum : Array[Double],
+  reg : Reg,
 ) -> Result[Unit, NMFError] {
   let k = h.rows
   matmul_a_bt_into(ratio, h, numerator)
@@ -317,26 +340,26 @@ fn kl_update_w_from_ratio(
     rowsum[p] = s
   }
   for p in 0..<k {
-    let den = rowsum[p]
-    if den == 0.0 {
-      for i in 0..<w.rows {
-        w.data[i * k + p] = 0.0
-      }
-    } else {
-      for i in 0..<w.rows {
-        let num = numerator.data[i * k + p]
+    for i in 0..<w.rows {
+      let idx = i * k + p
+      let old = w.data[idx]
+      let den = rowsum[p] + reg.l1 + reg.l2 * old
+      if den == 0.0 {
+        w.data[idx] = 0.0
+      } else {
+        let num = numerator.data[idx]
         if num.is_nan() || num.is_inf() || num < 0.0 {
           return Err(
             NumericalError("KL W update: invalid numerator at component \{p}"),
           )
         }
-        let next = w.data[i * k + p] * num / den
+        let next = old * num / den
         if next.is_nan() || next.is_inf() {
           return Err(
             NumericalError("KL W update: non-finite update at component \{p}"),
           )
         }
-        w.data[i * k + p] = next
+        w.data[idx] = next
       }
     }
   }
@@ -353,21 +376,22 @@ fn kl_update_w_from_ratio(
 
 ///|
 /// MU-KL fit. Each iteration recomputes WH and R before H, recomputes them
-/// after H, then updates W; the true generalized KL divergence drives the
-/// convergence test. This is a separate branch from Frobenius MU: the
-/// Frobenius update rules and their epsilon semantics are unchanged.
+/// after H, then updates W; the true regularized generalized KL divergence
+/// drives the convergence test. This is a separate branch from Frobenius MU:
+/// the Frobenius update rules and their epsilon semantics are unchanged.
 fn mu_kl_fit(
   v : Matrix,
   k : Int32,
   max_iter : Int32,
   tol : Double,
   seed : UInt64,
+  reg : Reg,
 ) -> Result[MuFit, NMFError] {
   let (w, h) = match random_init(v, k, seed) {
     Ok(pair) => pair
     Err(e) => return Err(e)
   }
-  mu_kl_fit_from(v, w, h, max_iter, tol)
+  mu_kl_fit_from(v, w, h, max_iter, tol, reg)
 }
 
 ///|
@@ -382,6 +406,7 @@ fn mu_kl_fit_from(
   h : Matrix,
   max_iter : Int32,
   tol : Double,
+  reg : Reg,
 ) -> Result[MuFit, NMFError] {
   let n = v.rows
   let d = v.cols
@@ -393,7 +418,7 @@ fn mu_kl_fit_from(
   let colsum = Array::make(k, 0.0)
   let rowsum = Array::make(k, 0.0)
   matmul_into(w, h, wh)
-  let mut prev = match kl_divergence(v, wh) {
+  let mut prev = match kl_reg_from_wh(v, wh, w, h, reg) {
     Ok(x) => x
     Err(e) => return Err(e)
   }
@@ -406,7 +431,7 @@ fn mu_kl_fit_from(
       Ok(_) => ()
       Err(e) => return Err(e)
     }
-    match kl_update_h_from_ratio(w, ratio, h, wtr, colsum) {
+    match kl_update_h_from_ratio(w, ratio, h, wtr, colsum, reg) {
       Ok(_) => ()
       Err(e) => return Err(e)
     }
@@ -416,12 +441,12 @@ fn mu_kl_fit_from(
       Ok(_) => ()
       Err(e) => return Err(e)
     }
-    match kl_update_w_from_ratio(h, ratio, w, rht, rowsum) {
+    match kl_update_w_from_ratio(h, ratio, w, rht, rowsum, reg) {
       Ok(_) => ()
       Err(e) => return Err(e)
     }
     matmul_into(w, h, wh)
-    let f = match kl_divergence(v, wh) {
+    let f = match kl_reg_from_wh(v, wh, w, h, reg) {
       Ok(x) => x
       Err(e) => return Err(e)
     }
@@ -437,14 +462,18 @@ fn mu_kl_fit_from(
 
 ///|
 /// MU-KL transform: H is fixed from training and W is optimized for new data
-/// `X ≈ WH` with `W ← W ⊙ (R Hᵀ) ⊘ rowsum(H)`, using the true KL divergence
-/// for convergence. No H retraining, no solver switch, and no model mutation.
+/// `X ≈ WH` with `W ← W ⊙ (R Hᵀ) ⊘ (rowsum(H) + l1 + l2·W)`, using the true
+/// regularized KL objective for convergence. No H retraining, no solver
+/// switch, and no model mutation. H's penalty is a constant of this
+/// subproblem and does not enter the W update, but is included in the
+/// monitored objective.
 fn mu_kl_transform(
   x : Matrix,
   h : Matrix,
   max_iter : Int32,
   tol : Double,
   seed : UInt64,
+  reg : Reg,
 ) -> Result[Matrix, NMFError] {
   let m = x.rows
   let k = h.rows
@@ -458,7 +487,7 @@ fn mu_kl_transform(
   let rht = zeros_buf(m, k)
   let rowsum = Array::make(k, 0.0)
   matmul_into(w, h, wh)
-  let mut prev = match kl_divergence(x, wh) {
+  let mut prev = match kl_reg_from_wh(x, wh, w, h, reg) {
     Ok(x) => x
     Err(e) => return Err(e)
   }
@@ -467,12 +496,12 @@ fn mu_kl_transform(
       Ok(_) => ()
       Err(e) => return Err(e)
     }
-    match kl_update_w_from_ratio(h, ratio, w, rht, rowsum) {
+    match kl_update_w_from_ratio(h, ratio, w, rht, rowsum, reg) {
       Ok(_) => ()
       Err(e) => return Err(e)
     }
     matmul_into(w, h, wh)
-    let f = match kl_divergence(x, wh) {
+    let f = match kl_reg_from_wh(x, wh, w, h, reg) {
       Ok(x) => x
       Err(e) => return Err(e)
     }
