@@ -2,8 +2,8 @@
 
 纯 MoonBit 实现的非负矩阵分解（NMF）库。`V ≈ W·H`，W、H 非负。
 
-> 状态：v0.1.0 开发中。**T01–T13 已完成**：MU-Frobenius、CD-Frobenius、NNDSVD/NNDSVDa 初始化、MU-KL、L1/L2 正则
-> 与 Hoyer 稀疏度指标可用，177 项测试在 wasm / wasm-gc / js / native 四后端全部通过。
+> 状态：v0.1.0 开发中。**T01–T14 已完成**：MU-Frobenius、CD-Frobenius、NNDSVD/NNDSVDa 初始化、MU-KL、L1/L2 正则、
+> Hoyer 稀疏度指标与属性/Fuzz 测试体系可用，188 项测试在 wasm / wasm-gc / js / native 四后端全部通过。
 
 [![CI](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml/badge.svg)](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml)
 
@@ -27,6 +27,7 @@
 | MU-KL 的 transform（固定 H，KL 更新 W） | ✅ 已实现（T11） |
 | L1/L2 正则（进入目标函数、更新公式与收敛判断，三种求解组合均支持） | ✅ 已实现（T12） |
 | Hoyer 稀疏度指标（`sparsity`，PLAN §8.7 边界约定） | ✅ 已实现（T13） |
+| 属性测试 + 轻量 Fuzz（固定 seed：200 组合法 + 244 组非法） | ✅ 已实现（T14） |
 
 选择不支持的 CD+KL 组合，或传入负数 / NaN / Infinity 的正则参数时，`fit` 返回 `Err(InvalidConfig)`，不会静默切换求解器、损失，也不会把非法参数替换为 0。
 
@@ -286,7 +287,7 @@ for j in 0..<w.cols() {
 
 ```sh
 moon check --deny-warn   # 类型与警告检查
-moon test                # 全部 177 项测试（默认 wasm 后端）
+moon test                # 全部 188 项测试（默认 wasm 后端）
 moon test --target js    # JS 后端（真实执行全部测试）
 moon test --target wasm-gc
 moon test --target native
@@ -304,6 +305,47 @@ moon fmt --check         # 格式检查
 全零、非法输入、seed 复现、未收敛状态）+ 200 组随机属性扫描。CD、NNDSVD、NNDSVDa、KL、
 MU-KL、正则与稀疏度指标均有独立测试。
 
+### 属性测试与轻量 Fuzz（T14）
+
+`src/property_test.mbt` 与 `src/fuzz_test.mbt` 使用项目自带的 `TestRng`（测试专用 LCG，
+独立于库内 SplitMix64），**seed 固定、无时钟、无外部随机源**，同 seed 在任一后端生成相同输入。
+
+五项性质（PLAN §9）与断言方式：
+
+| 性质 | 断言 |
+|---|---|
+| W/H 非负 | 逐元素 `x >= 0` 且有限 |
+| 维度正确 | `W: m×k`、`H: k×d` 严格相等 |
+| 同 seed 可复现 | 同 config 两次 `fit` 的 `W/H/loss/n_iter` 位相等 |
+| 合法输入不 panic | 每次调用返回 `Ok`，后续断言可达（MoonBit 中 panic 会终止测试） |
+| 非法输入返回 Err | 错误变体精确匹配（见下） |
+
+规模与 seed：
+
+| 测试 | seed | 用例数 |
+|---|---|---|
+| 合法输入五性质（含 fit + transform + sparsity） | `20261116` | 200 组（fit 200 次、transform 200 次） |
+| 确定性初始化 + MU-KL（全正数据） | `20261117` | 12 组 |
+| 目标单调性（三求解器 × 5 个预算前缀） | `20261118` | 8 组输入 × 3 组合 × 5 预算 |
+| sparsity 范围/尺度/排列不变性 | `20261119` | 100 组向量 |
+| 非法 fit / CD+KL / transform / 未训练 / 构造边界 / 状态安全 / sparsity | `20261116` + 偏移 | 80 + 16 + 60 + 40 + 12 + 6 + 30 = **244** |
+
+生成策略：尺寸 2–9（非方阵优先）、rank 1–min(m,d)、75% 含 `(i+j)%3` 精确零元素、
+10% 量级 1e-3 / 1e3、三种初始化、三组合、每 5 例开启 L1/L2 正则、预算 5–34。
+失败信息形如
+`property failed: seed=20261116 case=0 W[0,0] negative: -1.0`，
+可直接用 seed + case 复现。尺寸有界（≤12/边），超大形状只通过构造函数的溢出校验测试，
+不会申请不受控内存。
+
+范围说明：
+
+- `fit`/`transform`/`reconstruction_error` 只接受 `Matrix`，而 `Matrix::new` 已拒绝
+  NaN/±Inf，因此这些值**无法**到达模型 API；Fuzz 在构造边界与实际接受 `Array[Double]` 的
+  `sparsity` 上覆盖它们（不虚构不存在的错误路径）。
+- MU-KL 与 NNDSVD/NNDSVDa 组合在结构零处可能返回文档化的 `NumericalError`，故主扫描用
+  Random 初始化，确定性初始化单独用全正数据覆盖。
+- 已训练模型再次 `fit` 失败时，按既有契约回到**未训练**状态（不是保留旧模型），Fuzz 对该契约断言。
+
 CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 check、完整测试套件、
 三后端 check+test（后者的 matrix 展开为 native / js / wasm-gc 三个运行实例，共 5 个 Job 实例）。
 工具链版本采用 fail-closed 固定策略（见 `scripts/ci-install-moonbit.sh`）：官方安装脚本安装后
@@ -312,7 +354,7 @@ CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 
 CI 已在 GitHub Actions 实际运行并通过：T13 提交 `858c605` 的 run #9（2026-11-16），
 5 个 Job 实例（MoonBit Check、Unit & Integration Tests、Backend native / js / wasm-gc）全部成功。
 上述命令亦已在本地按 CI 相同配置验证通过（本地工具链 0.1.20261028；CI 锁定 0.1.20261104），
-177 项测试在四后端各执行一遍。
+188 项测试在四后端各执行一遍。
 
 ## 与现有实现的关系
 
