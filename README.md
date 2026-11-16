@@ -2,8 +2,8 @@
 
 纯 MoonBit 实现的非负矩阵分解（NMF）库。`V ≈ W·H`，W、H 非负。
 
-> 状态：v0.1.0 开发中。**T01–T12 已完成**：MU-Frobenius、CD-Frobenius、NNDSVD/NNDSVDa 初始化、MU-KL 与 L1/L2 正则可用，
-> 166 项测试在 wasm / wasm-gc / js / native 四后端全部通过。
+> 状态：v0.1.0 开发中。**T01–T13 已完成**：MU-Frobenius、CD-Frobenius、NNDSVD/NNDSVDa 初始化、MU-KL、L1/L2 正则
+> 与 Hoyer 稀疏度指标可用，177 项测试在 wasm / wasm-gc / js / native 四后端全部通过。
 
 [![CI](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml/badge.svg)](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml)
 
@@ -26,7 +26,7 @@
 | MU-KL 求解器（乘法更新，零值/零行列有明确策略） | ✅ 已实现（T11） |
 | MU-KL 的 transform（固定 H，KL 更新 W） | ✅ 已实现（T11） |
 | L1/L2 正则（进入目标函数、更新公式与收敛判断，三种求解组合均支持） | ✅ 已实现（T12） |
-| Hoyer 稀疏度指标 | 计划（T13） |
+| Hoyer 稀疏度指标（`sparsity`，PLAN §8.7 边界约定） | ✅ 已实现（T13） |
 
 选择不支持的 CD+KL 组合，或传入负数 / NaN / Infinity 的正则参数时，`fit` 返回 `Err(InvalidConfig)`，不会静默切换求解器、损失，也不会把非法参数替换为 0。
 
@@ -229,11 +229,64 @@ let config = @nmf.NMFConfig::new(
 CD+KL 组合不受影响，仍然返回 `InvalidConfig`；三个有效组合（MU+Frobenius、
 CD+Frobenius、MU+KL）均支持任意 `l1_reg` / `l2_reg` 组合。
 
+### Hoyer 稀疏度
+
+`@nmf.sparsity(x)` 计算单个非负向量的 Hoyer 稀疏度（Hoyer, JMLR 2004）：
+
+```text
+S(x) = (√n − ‖x‖₁/‖x‖₂) / (√n − 1)
+```
+
+取值范围 `[0, 1]`：所有元素相等 → `0`（完全不稀疏）；只有一个非零元素 → `1`（最大稀疏）。
+指标对正数缩放（`S(cx) = S(x)`，`c > 0`）和元素排列都不变。
+
+```moonbit
+let s = @nmf.sparsity([1.0, 1.0, 0.0, 0.0]) // Ok(0.5857864376269051)
+let t = @nmf.sparsity([1.0, 0.0, 0.0, 0.0]) // Ok(1.0)
+let u = @nmf.sparsity([2.0, 2.0, 2.0])       // Ok(0.0)
+```
+
+边界约定（PLAN §8.7，按此顺序判定）：
+
+| 输入 | 结果 |
+|---|---|
+| 空向量 `[]` | `Err(InvalidConfig)`：公式无定义 |
+| 单元素 `[x]` | `Ok(0.0)`：分母 `√n−1 = 0`，约定为 0（优先于全零规则，故 `[0.0] → 0.0`） |
+| 全零向量（`n ≥ 2`） | `Ok(1.0)`：约定"没有非零分量即最大稀疏"（公式为 0/0） |
+| 含负元素 | `Err(NegativeEntry(0, idx))`：向量按 1×n 行处理，第一维恒为 0 |
+| NaN / ±Infinity | `Err(NumericalError)`：先于负值判断，故 `-Infinity` 也报 NumericalError |
+
+数值策略：先除以最大元素得到 `y ∈ [0,1]` 再求和（`Σy ≤ n`、`Σy² ≤ n`，不会像直接算
+`Σx²` 那样在大数处上溢、在次正规数处下溢），两个和都用 Kahan 补偿；仅在 `|S| ≤ 1e-12`
+的舍入残差内夹到 `0`（等元素向量会出现这种情况），超出容差说明计算有缺陷，返回
+`NumericalError` 而不是静默截断。
+
+**统计方向**：`sparsity` 只接受单个向量，不提供矩阵级平均——因为矩阵级聚合必须替调用方
+选择方向与零向量规则。NMF 中两个因子有各自的自然方向，按需提取后逐个计算：
+
+- `W`（`m×k`）的**列**是基向量，长度 `m`；
+- `H`（`k×n`）的**行**是成分的样本激活向量，长度 `n`。
+
+```moonbit
+// 每个基向量的稀疏度（W 的列）
+let w = match model.w() { Ok(m) => m; Err(e) => return Err(e) }
+for j in 0..<w.cols() {
+  let column = Array::make(w.rows(), 0.0)
+  for i in 0..<w.rows() {
+    column[i] = match w.get(i, j) { Ok(x) => x; Err(e) => return Err(e) }
+  }
+  println("W[:, \{j}] sparsity = \{@nmf.sparsity(column)}")
+}
+```
+
+把整个矩阵展平后计算不是 W 或 H 的稀疏度，也不等于各成分稀疏度的平均。指标是纯函数，
+不读取也不修改模型状态。
+
 ## 运行测试
 
 ```sh
 moon check --deny-warn   # 类型与警告检查
-moon test                # 全部 166 项测试（默认 wasm 后端）
+moon test                # 全部 177 项测试（默认 wasm 后端）
 moon test --target js    # JS 后端（真实执行全部测试）
 moon test --target wasm-gc
 moon test --target native
@@ -246,8 +299,10 @@ moon fmt --check         # 格式检查
 内部 SVD（幂迭代/deflation/秩不足/重复奇异值/极小值）→ NNDSVD/NNDSVDa（正负部选对、
 零退化、非负、确定性、零元素均值填充、全零保持）→ L1/L2 正则（手算目标值、三求解器
 单轮更新对照独立参考实现、完整目标单调性、强 L1 收缩、transform 只正则 W、零正则逐位兼容、
-参数合法性）→ NMF API → 端到端验收（普通矩阵、已知低秩、全零、非法输入、seed 复现、
-未收敛状态）+ 200 组随机属性扫描。CD、NNDSVD、NNDSVDa、KL、MU-KL 与正则均有独立白盒测试。
+参数合法性）→ Hoyer 稀疏度（手算样例、尺度/排列不变性、零向量与维度边界、非法输入、
+极大极小量级、非方阵行/列方向、范围性质）→ NMF API → 端到端验收（普通矩阵、已知低秩、
+全零、非法输入、seed 复现、未收敛状态）+ 200 组随机属性扫描。CD、NNDSVD、NNDSVDa、KL、
+MU-KL、正则与稀疏度指标均有独立测试。
 
 CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 check、完整测试套件、
 三后端 check+test（后者的 matrix 展开为 native / js / wasm-gc 三个运行实例，共 5 个 Job 实例）。
@@ -257,7 +312,7 @@ CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 
 CI 已在 GitHub Actions 实际运行并通过：T12 提交 `b4a7037` 的 run #7（2026-11-16），
 5 个 Job 实例（MoonBit Check、Unit & Integration Tests、Backend native / js / wasm-gc）全部成功。
 上述命令亦已在本地按 CI 相同配置验证通过（本地工具链 0.1.20261028；CI 锁定 0.1.20261104），
-166 项测试在四后端各执行一遍。
+177 项测试在四后端各执行一遍。
 
 ## 与现有实现的关系
 
