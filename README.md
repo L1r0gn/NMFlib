@@ -287,7 +287,7 @@ for j in 0..<w.cols() {
 
 ```sh
 moon check --deny-warn   # 类型与警告检查
-moon test                # 全部 188 项测试（默认 wasm 后端）
+moon test                # 全部 209 项测试（默认 wasm 后端；188 项原有 + 21 项 T16 sklearn 参考 fixtures）
 moon test --target js    # JS 后端（真实执行全部测试）
 moon test --target wasm-gc
 moon test --target native
@@ -346,8 +346,10 @@ MU-KL、正则与稀疏度指标均有独立测试。
   Random 初始化，确定性初始化单独用全正数据覆盖。
 - 已训练模型再次 `fit` 失败时，按既有契约回到**未训练**状态（不是保留旧模型），Fuzz 对该契约断言。
 
-CI（`.github/workflows/ci.yml`）在 push / PR 时运行三个 Job：格式与 check、完整测试套件、
-三后端 check+test（后者的 matrix 展开为 native / js / wasm-gc 三个运行实例，共 5 个 Job 实例）。
+CI（`.github/workflows/ci.yml`）在 push / PR 时运行：格式与 check、完整测试套件、
+三后端 check+test（matrix 展开为 native / js / wasm-gc），以及独立的轻量
+`Python Reference Smoke` Job（T16 参考工具自测 + 单数据集单 seed 小型对照，
+完整多 seed 实验不进 CI，按需本地运行）。
 工具链版本采用 fail-closed 固定策略（见 `scripts/ci-install-moonbit.sh`）：官方安装脚本安装后
 断言版本号，不符即失败。
 
@@ -355,6 +357,50 @@ CI 已在 GitHub Actions 实际运行并通过：T14 提交 `61a32ec` 的 run #1
 5 个 Job 实例（MoonBit Check、Unit & Integration Tests、Backend native / js / wasm-gc）全部成功。
 上述命令亦已在本地按 CI 相同配置验证通过（本地工具链 0.1.20261028；CI 锁定 0.1.20261104），
 188 项测试在四后端各执行一遍。
+
+## 数值参考验证（T16：scikit-learn 对照）
+
+`validation/sklearn_reference/` 是独立的 Python 参考验证工具（**不是生产依赖**，
+未向 MoonBit 包引入任何 Python/sklearn 依赖，也未为对照修改任何公开 API）：
+
+- 以 sklearn 1.7.2 `decomposition.NMF` 为独立参考，对 MU+Frobenius、CD+Frobenius、
+  MU+KL 三个有效组合做系统对照；CD+KL 仍为 `InvalidConfig`，不参与对照。
+- 双方最终 W/H 一律用独立的 `objective.py` 重新计算完整目标
+  `J = D(V‖WH) + λ1(ΣW+ΣH) + (λ2/2)(‖W‖²_F+‖H‖²_F)`，不信任任何一侧自报 loss。
+- 正则参数映射 `r=λ1/(λ1+λ2)`、`alpha_W=(λ1+λ2)/n_features`、
+  `alpha_H=(λ1+λ2)/n_samples`（alpha_H 永远显式设置，不用默认 `"same"`），
+  经手算验证（L1 only / L2 only / L1+L2 / 关闭 × 非方阵）。
+- 4 个固定 seed 数据集：低秩小/中、带噪声低秩、稀疏计数（**真实 rank 2 < 配置 k=4**
+  的秩不足矩阵，含 35.8% 精确零）；主网格 5 seeds × 4 正则配置 × 3 组合 +
+  NNDSVD/NNDSVDa 确定性层，共 336 案例 × 2 实现 = 672 次 fit。
+- 明确记录两侧差异：收敛判据（NMFlib 每轮完整目标相对变化；sklearn CD 用 KKT
+  violation 比、MU 每 10 轮用无正则误差相对变化）、MU 更新顺序、sklearn MU-KL 的
+  `EPSILON=1.19e-7` 分母保护 vs NMFlib 的 `V>0∧WH=0 → NumericalError` 零值约定、
+  `reconstruction_err_` 在 KL 损失下为 sqrt(2KL) 而 NMFlib 恒为 Frobenius 范数、
+  随机初始化分布（同尺度 `sqrt(mean/k)`、不同 RNG）。相同 seed 不意味着相同初始 W/H，
+  结论基于多 seed 统计与独立目标，不做未对齐的 W/H 逐元素比较。
+
+复现（需要 conda 与 moon 工具链）：
+
+```sh
+cd validation/sklearn_reference
+pip install -r requirements.txt   # numpy/scipy/scikit-learn/matplotlib 固定版本
+python generate_data.py && python selftest.py
+python run_experiments.py         # 完整网格 -> results/results.csv + metadata.json
+python analyze_results.py         # summary.csv / analysis.md / plots/
+python run_experiments.py --smoke # CI 使用的轻量子集
+```
+
+MoonBit 侧通过 `moonbit_runner/`（独立模块，moon.work 本地工作区依赖本仓库）
+只用公开 API 拟合并输出 W/H，供 Python 独立评估。
+
+`src/fixtures_test.mbt`（21 项，由 `scripts/gen_fixtures.py` 生成）把实测筛选出的
+sklearn 参考目标值/重构误差固化为字面量：同配置 fit 后断言完整目标与重构误差相对偏差
+≤5%、W/H 非负有限、维度正确。**5% 容差经过实测验证**：仅纳入实测 seed-42 偏差 ≤3%
+且参考量级足够（J≥1e-3、重构误差≥1e-2）的组合；全部实测偏差（含未纳入组合及原因）
+记录于 `validation/sklearn_reference/results/fixtures_selection.json`。
+近零目标（无正则精确恢复场景）的相对偏差无意义，不纳入 fixture 断言，其实测绝对值
+与分析见 `results/analysis.md`。
 
 ## 与现有实现的关系
 
