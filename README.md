@@ -354,9 +354,11 @@ CI（`.github/workflows/ci.yml`）在 push / PR 时运行：格式与 check、�
 断言版本号，不符即失败。
 
 CI 已在 GitHub Actions 实际运行并通过：T14 提交 `61a32ec` 的 run #11（2026-11-16），
-5 个 Job 实例（MoonBit Check、Unit & Integration Tests、Backend native / js / wasm-gc）全部成功。
+5 个 Job 实例（MoonBit Check、Unit & Integration Tests、Backend native / js / wasm-gc）全部成功；
+T16 提交 `9d8a0f3` 的 run #17（2026-11-17，分支 `feat/t16-sklearn-reference`），
+6 个 Job（上述 5 个 + Python Reference Smoke）全部成功。
 上述命令亦已在本地按 CI 相同配置验证通过（本地工具链 0.1.20261028；CI 锁定 0.1.20261104），
-188 项测试在四后端各执行一遍。
+209 项测试在四后端各执行一遍。
 
 ## 数值参考验证（T16：scikit-learn 对照）
 
