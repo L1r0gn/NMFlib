@@ -123,6 +123,10 @@ reconstruction error = 1.8065620213588327
 moon run examples/topic_modeling
 ```
 
+T17 验证期间官方工具链发布 0.1.20261117，触发 CI 的 fail-closed 版本断言；已按
+`scripts/ci-install-moonbit.sh` 内置流程完成本地全量验证（check --deny-warn +
+四后端 188 项测试 + 两个示例，输出与 0.1.20261028 逐字一致）后更新 CI pin。
+
 ### NMFConfig 使用方法
 
 全部参数为标签参数，除 `n_components` 外均有默认值：

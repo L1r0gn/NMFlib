@@ -15,7 +15,7 @@ permissions:
 env:
   # Locally verified toolchain pin, enforced fail-closed by
   # scripts/ci-install-moonbit.sh (the official CDN has no versioned keys).
-  EXPECTED_MOON_VERSION: "0.1.20261104"
+  EXPECTED_MOON_VERSION: "0.1.20261117"
 
 jobs:
   check:
