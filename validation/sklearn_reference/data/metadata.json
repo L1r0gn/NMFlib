@@ -1,0 +1,50 @@
+{
+  "A1": {
+    "k": 3,
+    "true_rank": 3,
+    "numeric_rank": 3,
+    "seed": 101,
+    "shape": [
+      12,
+      9
+    ],
+    "zero_fraction": 0.0,
+    "description": "low-rank synthetic, small, strictly positive"
+  },
+  "A2": {
+    "k": 5,
+    "true_rank": 5,
+    "numeric_rank": 5,
+    "seed": 102,
+    "shape": [
+      40,
+      25
+    ],
+    "zero_fraction": 0.0,
+    "description": "low-rank synthetic, medium, strictly positive"
+  },
+  "B": {
+    "k": 4,
+    "true_rank": 4,
+    "numeric_rank": 20,
+    "seed": 103,
+    "shape": [
+      30,
+      20
+    ],
+    "zero_fraction": 0.0,
+    "description": "rank-4 signal + Gaussian noise (sigma=0.05*mean), clipped at 0"
+  },
+  "C": {
+    "k": 4,
+    "true_rank": 2,
+    "numeric_rank": 2,
+    "seed": 104,
+    "shape": [
+      25,
+      18
+    ],
+    "zero_fraction": 0.35777777777777775,
+    "description": "sparse integer counts, exact zeros, true rank 2 < configured k=4"
+  }
+}

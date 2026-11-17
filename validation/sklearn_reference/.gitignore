@@ -1,0 +1,7 @@
+# generated / transient artifacts (regenerable via run_experiments.py)
+moonbit_runner/cases_gen.mbt
+moonbit_runner/_build/
+results/results_smoke.csv
+results/metadata_smoke.json
+warnings.log
+__pycache__/

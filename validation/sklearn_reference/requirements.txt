@@ -1,0 +1,6 @@
+# Verified versions (conda env nmflib-t16, Python 3.10.22, Windows 10.0.22631).
+# pandas is intentionally NOT used: csv stdlib covers all table needs.
+numpy==2.2.6
+scipy==1.15.3
+scikit-learn==1.7.2
+matplotlib==3.10.9
