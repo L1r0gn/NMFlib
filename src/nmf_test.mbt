@@ -31,25 +31,34 @@ test "api: every model-dependent call returns NotFitted before training" {
 }
 
 ///|
-test "api: unsupported solver/loss/init values are explicit errors" {
+test "api: unsupported solver/loss combination is an explicit error" {
   let v = api_v()
-  let cases : Array[@nmf.NMFConfig] = [
-    @nmf.NMFConfig::new(n_components=1, solver=@nmf.Solver::CD),
-    @nmf.NMFConfig::new(n_components=1, loss=@nmf.Loss::KLDivergence),
+  let model = @nmf.NMF::new(
     @nmf.NMFConfig::new(
       n_components=1,
       solver=@nmf.Solver::CD,
       loss=@nmf.Loss::KLDivergence,
     ),
-    @nmf.NMFConfig::new(n_components=1, init=@nmf.Init::NNDSVD),
-    @nmf.NMFConfig::new(n_components=1, init=@nmf.Init::NNDSVDa),
-    @nmf.NMFConfig::new(n_components=1, l1_reg=0.1),
-    @nmf.NMFConfig::new(n_components=1, l2_reg=0.1),
-  ]
-  for c in cases {
+  )
+  assert_true(model.fit(v) is Err(@nmf.InvalidConfig(_)))
+  assert_true(model.w() is Err(@nmf.NotFitted))
+}
+
+///|
+test "api: nonzero regularization is accepted (T12)" {
+  // T11 rejected any nonzero l1_reg/l2_reg with InvalidConfig; T12 implements
+  // them, so the same configs must train. The rejection of *illegal* values is
+  // covered by `reg_api_test.mbt`.
+  let v = api_v()
+  for
+    c in [
+      @nmf.NMFConfig::new(n_components=1, l1_reg=0.1),
+      @nmf.NMFConfig::new(n_components=1, l2_reg=0.1),
+      @nmf.NMFConfig::new(n_components=1, l1_reg=0.1, l2_reg=0.2),
+    ] {
     let model = @nmf.NMF::new(c)
-    assert_true(model.fit(v) is Err(@nmf.InvalidConfig(_)))
-    assert_true(model.w() is Err(@nmf.NotFitted))
+    assert_eq(model.fit(v), Ok(()))
+    assert_true(model.w() is Ok(_))
   }
 }
 

@@ -30,7 +30,7 @@ test "wb mu: rel_change handles near-zero objective" {
 test "wb mu: rank-1 exact factorization is recovered" {
   // V = [1,2,3]ᵀ · [2,1], rank 1
   let v = mu_v()
-  let fit = unwrap_fit(mu_frobenius_fit(v, 1, 500, 1.0e-10, 42UL))
+  let fit = unwrap_fit(mu_frobenius_fit(v, 1, 500, 1.0e-10, 42UL, no_reg))
   assert_eq(fit.w.rows, 3)
   assert_eq(fit.w.cols, 1)
   assert_eq(fit.h.rows, 1)
@@ -51,7 +51,7 @@ test "wb mu: rank-1 exact factorization is recovered" {
 ///|
 test "wb mu: loss_value equals the true objective of returned factors" {
   let v = mu_v()
-  let fit = unwrap_fit(mu_frobenius_fit(v, 1, 37, 1.0e-12, 7UL))
+  let fit = unwrap_fit(mu_frobenius_fit(v, 1, 37, 1.0e-12, 7UL, no_reg))
   let f = match frobenius_objective(v, fit.w, fit.h) {
     Ok(f) => f
     Err(e) => abort("unexpected: \{e}")
@@ -72,7 +72,7 @@ test "wb mu: objective is non-increasing along the deterministic trajectory" {
   }
   let mut prev = 1.0e300
   for budget in [1, 5, 20, 100] {
-    let fit = unwrap_fit(mu_frobenius_fit(v, 2, budget, 1.0e-14, 11UL))
+    let fit = unwrap_fit(mu_frobenius_fit(v, 2, budget, 1.0e-14, 11UL, no_reg))
     assert_true(fit.loss_value <= prev + 1.0e-9)
     prev = fit.loss_value
   }
@@ -81,7 +81,7 @@ test "wb mu: objective is non-increasing along the deterministic trajectory" {
 ///|
 test "wb mu: all-zero V gives zero loss and finite non-negative factors" {
   let z = zeros_buf(3, 4)
-  let fit = unwrap_fit(mu_frobenius_fit(z, 2, 50, 1.0e-4, 42UL))
+  let fit = unwrap_fit(mu_frobenius_fit(z, 2, 50, 1.0e-4, 42UL, no_reg))
   assert_eq(fit.loss_value, 0.0)
   assert_true(fit.converged)
   assert_true(fit.n_iter >= 1 && fit.n_iter <= 50)
@@ -101,7 +101,7 @@ test "wb mu: 1x1 matrix converges to the exact product" {
     Ok(m) => m
     Err(e) => abort("unexpected: \{e}")
   }
-  let fit = unwrap_fit(mu_frobenius_fit(v, 1, 200, 1.0e-12, 3UL))
+  let fit = unwrap_fit(mu_frobenius_fit(v, 1, 200, 1.0e-12, 3UL, no_reg))
   assert_true(fit.loss_value < 1.0e-12)
   let wh = fit.w.data[0] * fit.h.data[0]
   assert_true((wh - 5.0).abs() < 1.0e-6)
@@ -116,7 +116,7 @@ test "wb mu: max_iter exhaustion is reported honestly" {
     Ok(m) => m
     Err(e) => abort("unexpected: \{e}")
   }
-  let fit = unwrap_fit(mu_frobenius_fit(v, 2, 1, 1.0e-12, 42UL))
+  let fit = unwrap_fit(mu_frobenius_fit(v, 2, 1, 1.0e-12, 42UL, no_reg))
   assert_eq(fit.n_iter, 1)
   assert_true(!fit.converged)
   assert_true(fit.loss_value >= 0.0)
@@ -126,9 +126,9 @@ test "wb mu: max_iter exhaustion is reported honestly" {
 ///|
 test "wb mu: transform with fixed H reconstructs rank-1 data" {
   let v = mu_v()
-  let fit = unwrap_fit(mu_frobenius_fit(v, 1, 500, 1.0e-10, 42UL))
+  let fit = unwrap_fit(mu_frobenius_fit(v, 1, 500, 1.0e-10, 42UL, no_reg))
   // Transform the training data itself with H fixed.
-  let w2 = match mu_frobenius_transform(v, fit.h, 500, 1.0e-10, 42UL) {
+  let w2 = match mu_frobenius_transform(v, fit.h, 500, 1.0e-10, 42UL, no_reg) {
     Ok(w) => w
     Err(e) => abort("unexpected: \{e}")
   }
@@ -152,7 +152,7 @@ test "wb mu: transform of all-zero rows stays finite" {
     Ok(m) => m
     Err(e) => abort("unexpected: \{e}")
   }
-  let w = match mu_frobenius_transform(z, h, 20, 1.0e-4, 1UL) {
+  let w = match mu_frobenius_transform(z, h, 20, 1.0e-4, 1UL, no_reg) {
     Ok(w) => w
     Err(e) => abort("unexpected: \{e}")
   }
