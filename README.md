@@ -126,6 +126,9 @@ moon run examples/topic_modeling
 T17 验证期间官方工具链发布 0.1.20261117，触发 CI 的 fail-closed 版本断言；已按
 `scripts/ci-install-moonbit.sh` 内置流程完成本地全量验证（check --deny-warn +
 四后端 188 项测试 + 两个示例，输出与 0.1.20261028 逐字一致）后更新 CI pin。
+T17 提交 `740c622` 的 run #20（2026-11-17，分支 `feat/t17-topic-modeling`），
+5 个 Job 实例全部成功；Unit & Integration Tests job 真实运行了两个示例，
+topic_modeling 的全部运行时自检在 CI 中通过。
 
 ### NMFConfig 使用方法
 
