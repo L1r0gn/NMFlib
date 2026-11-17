@@ -169,7 +169,7 @@ def run_moonbit(cases, datasets):
     proc = subprocess.run(
         ["moon", "run", "--target", "native", "."],
         cwd=RUNNER, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", shell=True,
+        encoding="utf-8", errors="replace",
     )
     wall = time.perf_counter() - t0
     if proc.returncode != 0:
@@ -392,7 +392,7 @@ def main():
         ],
         "git_commit": subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True,
-            text=True, shell=True).stdout.strip(),
+            text=True).stdout.strip(),
     }
     meta_path = out_dir / ("metadata_smoke.json" if args.smoke else "metadata.json")
     meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
