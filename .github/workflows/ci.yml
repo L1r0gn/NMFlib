@@ -15,7 +15,7 @@ permissions:
 env:
   # Locally verified toolchain pin, enforced fail-closed by
   # scripts/ci-install-moonbit.sh (the official CDN has no versioned keys).
-  EXPECTED_MOON_VERSION: "0.1.20261104"
+  EXPECTED_MOON_VERSION: "0.1.20261117"
 
 jobs:
   check:
@@ -42,6 +42,12 @@ jobs:
       # L1/L2 regularization, NMF API, end-to-end.
       - name: Run full test suite
         run: moon test
+      # T17: run both examples end-to-end. topic_modeling aborts (non-zero
+      # exit) if any runtime self-check fails, so this step gates the pipeline.
+      - name: Run examples (quickstart + topic modeling)
+        run: |
+          moon run examples/quickstart
+          moon run examples/topic_modeling
 
   backends:
     name: Backend ${{ matrix.target }}

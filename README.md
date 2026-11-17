@@ -28,6 +28,7 @@
 | L1/L2 正则（进入目标函数、更新公式与收敛判断，三种求解组合均支持） | ✅ 已实现（T12） |
 | Hoyer 稀疏度指标（`sparsity`，边界约定见下文） | ✅ 已实现（T13） |
 | 属性测试 + 轻量 Fuzz（固定 seed：200 组合法 + 244 组非法） | ✅ 已实现（T14） |
+| Topic Modeling 应用示例 `examples/topic_modeling`（主题建模 MVP） | ✅ 已实现（T17） |
 
 选择不支持的 CD+KL 组合，或传入负数 / NaN / Infinity 的正则参数时，`fit` 返回 `Err(InvalidConfig)`，不会静默切换求解器、损失，也不会把非法参数替换为 0。
 
@@ -110,6 +111,24 @@ W: 3x2, H: 2x3
 iterations=64, converged=true
 reconstruction error = 1.8065620213588327
 ```
+
+### 应用示例：Topic Modeling（T17）
+
+`examples/topic_modeling` 是可运行的主题建模 MVP：固定语料 → 空白 tokenizer →
+文档—词频矩阵 → MU + 广义 KL + Random 分解 → 主题关键词 / Hoyer 稀疏度 /
+文档主题激活 → 新文档 `transform` 推理，全程带运行时自检。详见
+[examples/topic_modeling/README.md](examples/topic_modeling/README.md)。
+
+```sh
+moon run examples/topic_modeling
+```
+
+T17 验证期间官方工具链发布 0.1.20261117，触发 CI 的 fail-closed 版本断言；已按
+`scripts/ci-install-moonbit.sh` 内置流程完成本地全量验证（check --deny-warn +
+四后端 188 项测试 + 两个示例，输出与 0.1.20261028 逐字一致）后更新 CI pin。
+T17 提交 `740c622` 的 run #20（2026-11-17，分支 `feat/t17-topic-modeling`），
+5 个 Job 实例全部成功；Unit & Integration Tests job 真实运行了两个示例，
+topic_modeling 的全部运行时自检在 CI 中通过。
 
 ### NMFConfig 使用方法
 
