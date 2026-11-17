@@ -1,0 +1,130 @@
+{
+  "task": "T16 sklearn reference validation",
+  "mode": "full",
+  "environment": {
+    "python": "3.10.22",
+    "numpy": "2.2.6",
+    "scipy": "1.15.3",
+    "scikit_learn": "1.7.2",
+    "platform": "Windows-10-10.0.22631-SP0",
+    "dtype": "float64"
+  },
+  "grid": {
+    "datasets": {
+      "A1": {
+        "shape": [
+          12,
+          9
+        ],
+        "k": 3,
+        "true_rank": 3,
+        "numeric_rank": 3,
+        "seed": 101,
+        "zero_fraction": 0.0
+      },
+      "A2": {
+        "shape": [
+          40,
+          25
+        ],
+        "k": 5,
+        "true_rank": 5,
+        "numeric_rank": 5,
+        "seed": 102,
+        "zero_fraction": 0.0
+      },
+      "B": {
+        "shape": [
+          30,
+          20
+        ],
+        "k": 4,
+        "true_rank": 4,
+        "numeric_rank": 20,
+        "seed": 103,
+        "zero_fraction": 0.0
+      },
+      "C": {
+        "shape": [
+          25,
+          18
+        ],
+        "k": 4,
+        "true_rank": 2,
+        "numeric_rank": 2,
+        "seed": 104,
+        "zero_fraction": 0.35777777777777775
+      }
+    },
+    "combos": [
+      [
+        "MU",
+        "frobenius"
+      ],
+      [
+        "CD",
+        "frobenius"
+      ],
+      [
+        "MU",
+        "kl"
+      ]
+    ],
+    "reg_configs": [
+      [
+        "none",
+        0.0,
+        0.0
+      ],
+      [
+        "l1",
+        0.05,
+        0.0
+      ],
+      [
+        "l2",
+        0.0,
+        0.1
+      ],
+      [
+        "l1l2",
+        0.05,
+        0.1
+      ]
+    ],
+    "seeds": [
+      11,
+      23,
+      42,
+      77,
+      101
+    ],
+    "deterministic_inits": [
+      "NNDSVD",
+      "NNDSVDa"
+    ],
+    "max_iter": 500,
+    "tol": 1e-06,
+    "cases_per_impl": 336
+  },
+  "semantic_differences": {
+    "stopping_nmflib": "every iteration: |F_t - F_{t-1}| / max(1, |F_{t-1}|) < tol, where F is the full regularized objective (1/2||V-WH||_F^2 or KL, plus Omega)",
+    "stopping_sklearn_cd": "every iteration: KKT violation / violation_init <= tol (violation_init measured after iteration 1); break if violation_init==0",
+    "stopping_sklearn_mu": "every 10 iterations: (previous_error - error)/error_at_init < tol, error = ||X-WH||_F for frobenius, sqrt(2*KL) for kullback-leibler; regularization is NOT part of this monitored error",
+    "update_order": "NMFlib MU/CD update H first then W; sklearn MU updates W first then H (CD: W then H as well). Same alternating scheme, different path.",
+    "kl_zero_protection": "sklearn MU-KL floors WH at EPSILON=1.1920929e-07 (float32 eps) inside the V/WH ratio, maps zero W column sums to 1.0 and zero denominators to EPSILON, and zeroes H entries below float64 eps after updates; V>0 with WH=0 therefore yields a large finite ratio instead of an error. NMFlib returns NumericalError for V>0 and WH=0, normalizes zero-denominator components to 0, and never adds epsilon to the KL objective itself.",
+    "random_init": "both use scale sqrt(mean(V)/k); sklearn draws |standard_normal| (half-normal, numpy RNG), NMFlib draws uniform(0,1) (SplitMix64). Same integer seed does NOT give the same initial W/H.",
+    "nndsvd": "sklearn nndsvd/nndsvda use randomized SVD (depends on random_state); NMFlib uses deterministic internal power iteration + deflation (seed-independent). Element-wise equality is not expected.",
+    "converged_field": "NMFlib exposes converged(); sklearn NMF has NO converged attribute, only n_iter_. sklearn rows record converged as empty and hit_max_iter = (n_iter_ >= max_iter).",
+    "reconstruction_err_": "sklearn reconstruction_err_ = _beta_divergence(X,W,H,beta_loss,square_root=True): ||X-WH||_F for frobenius loss but sqrt(2*KL) for kullback-leibler loss (both solvers). NMFlib reconstruction_error is ALWAYS ||V-WH||_F regardless of loss. Independent evaluation uses the Frobenius norm for both sides; sklearn's reported value is crosschecked against its own documented semantics."
+  },
+  "moonbit_runner_wall_seconds": 34.75302809999994,
+  "nmflib_fit_seconds_note": "per-fit timing is not exposed by the NMFlib public API; only the total runner wall time is recorded (no production change made)",
+  "reproducibility_note": "verified empirically with two consecutive full-grid runs: all results.csv columns are bit-identical except fit_seconds (sklearn per-fit wall timings) and moonbit_runner_wall_seconds here, which are inherently nondeterministic; datasets, parameters, factors, objectives and crosschecks reproduce exactly",
+  "crosscheck_max_rel_diff": 1.2928999208012235e-05,
+  "crosscheck_max_abs_diff": 7.146066319184386e-10,
+  "crosscheck_rule": "fail if rel > 1e-8 AND abs > 1e-9 (cancellation near zero)",
+  "error_runs": [],
+  "kl_infinite_objectives": [],
+  "git_commit": "b33eaf30cf7efe5eb0b105188b9793e636952578"
+}

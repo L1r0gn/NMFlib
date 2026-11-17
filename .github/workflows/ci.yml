@@ -15,7 +15,7 @@ permissions:
 env:
   # Locally verified toolchain pin, enforced fail-closed by
   # scripts/ci-install-moonbit.sh (the official CDN has no versioned keys).
-  EXPECTED_MOON_VERSION: "0.1.20261104"
+  EXPECTED_MOON_VERSION: "0.1.20261117"
 
 jobs:
   check:
@@ -42,6 +42,12 @@ jobs:
       # L1/L2 regularization, NMF API, end-to-end.
       - name: Run full test suite
         run: moon test
+      # T17: run both examples end-to-end. topic_modeling aborts (non-zero
+      # exit) if any runtime self-check fails, so this step gates the pipeline.
+      - name: Run examples (quickstart + topic modeling)
+        run: |
+          moon run examples/quickstart
+          moon run examples/topic_modeling
 
   backends:
     name: Backend ${{ matrix.target }}
@@ -61,3 +67,28 @@ jobs:
         run: moon check --target ${{ matrix.target }} --deny-warn
       - name: Test (${{ matrix.target }})
         run: moon test --target ${{ matrix.target }}
+
+  # T16: lightweight Python reference smoke. Deliberately NOT the full
+  # multi-seed grid (336 cases x 2 implementations) — that runs on demand
+  # via validation/sklearn_reference/run_experiments.py. This job only runs
+  # the tooling self-tests (hand-computed objectives, regularization mapping,
+  # KL zero conventions, reproducibility) plus a 3-case smoke fit on both
+  # implementations, keeping the MoonBit jobs' speed untouched.
+  python-smoke:
+    name: Python Reference Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install MoonBit (official installer, version-asserted)
+        run: bash scripts/ci-install-moonbit.sh
+      - name: Install reference dependencies (matplotlib not needed for smoke)
+        run: python -m pip install numpy==2.2.6 scipy==1.15.3 scikit-learn==1.7.2
+      - name: Reference tooling self-tests
+        working-directory: validation/sklearn_reference
+        run: python selftest.py
+      - name: Smoke experiment (A1, 3 combos, 1 seed, both implementations)
+        working-directory: validation/sklearn_reference
+        run: python run_experiments.py --smoke
