@@ -2,8 +2,9 @@
 
 纯 MoonBit 实现的非负矩阵分解（NMF）库。`V ≈ W·H`，W、H 非负。
 
-> 状态：v0.1.0 开发中。**T01–T14 已完成**：MU-Frobenius、CD-Frobenius、NNDSVD/NNDSVDa 初始化、MU-KL、L1/L2 正则、
-> Hoyer 稀疏度指标与属性/Fuzz 测试体系可用，188 项测试在 wasm / wasm-gc / js / native 四后端全部通过。
+> 状态：v0.1.0 开发中。**T01–T17 已完成**：MU-Frobenius、CD-Frobenius、NNDSVD/NNDSVDa 初始化、MU-KL、L1/L2 正则、
+> Hoyer 稀疏度指标、属性/Fuzz 测试体系、sklearn 独立数值参考验证（T16）与 Topic Modeling 应用示例（T17）可用，
+> 209 项测试在 wasm / wasm-gc / js / native 四后端全部通过。
 
 [![CI](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml/badge.svg)](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml)
 
@@ -368,7 +369,9 @@ MU-KL、正则与稀疏度指标均有独立测试。
 CI（`.github/workflows/ci.yml`）在 push / PR 时运行：格式与 check、完整测试套件、
 三后端 check+test（matrix 展开为 native / js / wasm-gc），以及独立的轻量
 `Python Reference Smoke` Job（T16 参考工具自测 + 单数据集单 seed 小型对照，
-完整多 seed 实验不进 CI，按需本地运行）。
+完整多 seed 实验不进 CI，按需本地运行）。Unit & Integration Tests Job 还在测试后
+真实运行两个示例（`moon run examples/quickstart` 与 `moon run examples/topic_modeling`，
+T17）；topic_modeling 的运行时自检失败会以非零退出码使该 Job 失败。
 工具链版本采用 fail-closed 固定策略（见 `scripts/ci-install-moonbit.sh`）：官方安装脚本安装后
 断言版本号，不符即失败。
 
@@ -376,7 +379,8 @@ CI 已在 GitHub Actions 实际运行并通过：T14 提交 `61a32ec` 的 run #1
 5 个 Job 实例（MoonBit Check、Unit & Integration Tests、Backend native / js / wasm-gc）全部成功；
 T16 提交 `9d8a0f3` 的 run #17（2026-11-17，分支 `feat/t16-sklearn-reference`），
 6 个 Job（上述 5 个 + Python Reference Smoke）全部成功。
-上述命令亦已在本地按 CI 相同配置验证通过（本地工具链 0.1.20261028；CI 锁定 0.1.20261104），
+上述命令亦已在本地按 CI 相同配置验证通过（T16 验证时本地工具链 0.1.20261028、CI 锁定
+0.1.20261104；T17 已将 pin 更新至 0.1.20261117 并重新全量验证，见上文 T17 示例小节），
 209 项测试在四后端各执行一遍。
 
 ## 数值参考验证（T16：scikit-learn 对照）
