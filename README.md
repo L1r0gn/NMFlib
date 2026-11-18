@@ -2,11 +2,7 @@
 
 **NMFlib** 是一个基于 MoonBit 实现的非负矩阵分解（Non-negative Matrix Factorization，NMF）数值计算库。
 
-通过将非负矩阵分解为两个低秩非负矩阵
-$
-V \approx WH
-$
-为数据降维、潜在特征提取和数据分析提供基础算法支持。
+通过将非负矩阵分解为两个低秩非负矩阵为数据降维、潜在特征提取和数据分析提供基础算法支持。
 
 [![CI](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml/badge.svg)](https://github.com/L1r0gn/NMFlib/actions/workflows/ci.yml)
 
